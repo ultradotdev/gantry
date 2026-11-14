@@ -415,7 +415,33 @@ fn report_started(spec: &Spec, old_pid: Option<u32>) -> Result<()> {
     Ok(())
 }
 
+/// How far installing the service got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Installed {
+    /// The service is in place and the daemon answers.
+    Running,
+    /// The commands that need administrator rights have been printed and
+    /// are the owner's to run; until then there is no service.
+    AwaitsOwner,
+}
+
+/// `gantry service install`: installs the service and says what is
+/// left to do by hand.
 pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
+    if install_step(state_dir, options)? == Installed::AwaitsOwner {
+        let spec = spec(state_dir, options)?;
+        println!(
+            "Then check on it and give it the Protect password:\n\n    {}\n    {}\n",
+            invocation(&spec, "service status"),
+            invocation(&spec, "unlock")
+        );
+    }
+    Ok(())
+}
+
+/// Installs the service as far as this program may, for a caller that
+/// sees to the rest itself.
+pub fn install_step(state_dir: &Path, options: &Options) -> Result<Installed> {
     let manager = manager()?;
     daemon::create_private_dir(state_dir)?;
     let spec = spec(state_dir, options)?;
@@ -449,7 +475,7 @@ pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
         match old_pid {
             Some(_) if !binary_changed => {
                 println!("The service is already installed and up to date.");
-                return report_started(&spec, None);
+                return report_started(&spec, None).map(|()| Installed::Running);
             }
             Some(pid) => {
                 println!("Restarting the daemon (pid {pid}) on the new binary...");
@@ -457,7 +483,7 @@ pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
             }
             None => println!("The service is installed; waiting for the daemon to start..."),
         }
-        return report_started(&spec, old_pid);
+        return report_started(&spec, old_pid).map(|()| Installed::Running);
     }
 
     if manager.needs_root(&spec) {
@@ -476,13 +502,8 @@ pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
                  Stop it first, with Ctrl-C in its terminal or:\n\n    kill {pid}"
             );
         }
-        println!(
-            "\nIt starts at once and again after every reboot. Then check on it and give it the\n\
-             Protect password:\n\n    {}\n    {}\n",
-            invocation(&spec, "service status"),
-            invocation(&spec, "unlock")
-        );
-        return Ok(());
+        println!("\nIt starts at once and again after every reboot.\n");
+        return Ok(Installed::AwaitsOwner);
     }
 
     // A daemon running by hand would hold the control socket against the
@@ -496,7 +517,7 @@ pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
         step.run()?;
     }
     println!("Installed the service at {}.", unit_path.display());
-    report_started(&spec, old_pid)
+    report_started(&spec, old_pid).map(|()| Installed::Running)
 }
 
 pub fn uninstall(state_dir: &Path, options: &Options) -> Result<()> {

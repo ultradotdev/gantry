@@ -168,10 +168,14 @@ pub fn run(state_dir: &Path, from_stdin: bool) -> Result<()> {
             println!("Signed in. {devices} devices are published to HomeKit.");
             return Ok(());
         }
-        bail!(
-            "not signed in: {}\nThe daemon kept the password and keeps trying; there is no need to unlock again.",
-            reply.detail
-        );
+        // What is in the way now, which after a second failure says more
+        // than the first attempt did.
+        let problem = client::state(state_dir)
+            .ok()
+            .and_then(|state| state.console)
+            .and_then(|console| console.problem)
+            .unwrap_or(reply.detail);
+        bail!("not signed in: {problem}.\nThe daemon kept the password and keeps trying; there is no need to unlock again.");
     }
     bail!("not signed in: {}\nThe daemon discarded the password and is waiting for another.", reply.detail)
 }

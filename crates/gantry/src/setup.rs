@@ -293,6 +293,30 @@ fn hand_over(state_dir: &Path, password: Secret, ask: &mut dyn Prompter) -> Resu
     Ok(())
 }
 
+/// Waits for the owner to run the administrator commands just printed,
+/// and says whether the service then came up. Setup goes on without it
+/// when they would rather do that later.
+fn owner_started_it(state_dir: &Path, ask: &mut dyn Prompter) -> Result<bool> {
+    loop {
+        if !ask.confirm("Run those two commands in another terminal window. Have they finished?", true)? {
+            println!("When they have, give the service the Protect password with:\n\n    gantry unlock\n");
+            return Ok(false);
+        }
+        let started = std::time::Instant::now();
+        while started.elapsed() < SERVICE_PATIENCE {
+            if client::state(state_dir).is_ok() {
+                println!("The service is running.");
+                return Ok(true);
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        println!("The service is not answering yet. Check that both commands ran without an error.");
+    }
+}
+
+/// How long a service just loaded gets to start answering.
+const SERVICE_PATIENCE: Duration = Duration::from_secs(10);
+
 /// How long setup watches the service reach the console before it says
 /// what is in the way and asks.
 const CONNECT_PATIENCE: Duration = Duration::from_secs(15);
@@ -401,10 +425,10 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
             listen: None,
             demo: false,
         };
-        service::install(state_dir, &options)?;
+        let installed = service::install_step(state_dir, &options)?;
         if stale {
             println!("The running daemon was started before this configuration. Restart it:\n\n    gantry service restart\n");
-        } else {
+        } else if installed == service::Installed::Running || owner_started_it(state_dir, ask)? {
             hand_over(state_dir, password, ask)?;
         }
     } else {
