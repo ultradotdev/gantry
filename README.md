@@ -120,6 +120,8 @@ presents the exact certificate you confirmed during setup.
 - **Local Network permission.** The first time the service runs, macOS may
   block it from reaching the console ("No route to host"). Allow
   Gantry under System Settings, Privacy & Security, Local Network.
+  Setup says so and waits while you do; the service picks it up within
+  seconds, with no restart.
 - **After an update**, the first connection attempt can fail and the retry
   a moment later succeeds. `gantry unlock` waits for that.
 - **Names.** Home keeps the name an accessory had when it was added.

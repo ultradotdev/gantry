@@ -1081,6 +1081,25 @@ pub struct ProtectBridge {
 /// account sign in for a reason a quick retry cannot fix.
 const REFUSED_DELAY: Duration = Duration::from_secs(300);
 
+/// How often the console is tried while macOS keeps the service off the
+/// local network: often, so that allowing it takes effect right away.
+const BLOCKED_DELAY: Duration = Duration::from_secs(5);
+
+/// What the console line says once "no route to host" has come back twice
+/// in a row. On a Mac that is nearly always the Local Network permission,
+/// which nothing in the error itself says.
+pub const LOCAL_NETWORK_BLOCKED: &str = "no route to the console: macOS may be keeping Gantry off the local network. \
+     Allow Gantry in System Settings, Privacy & Security, Local Network";
+
+/// Whether a connection failed with "no route to host", the error macOS
+/// gives a program it has not been allowed onto the local network.
+fn no_route(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .any(|io| io.kind() == std::io::ErrorKind::HostUnreachable)
+}
+
 impl ProtectBridge {
     /// Publishes the devices known from the last run, so HomeKit sees a
     /// stable set of accessories before the console has even been contacted.
@@ -1133,6 +1152,8 @@ impl ProtectBridge {
     pub async fn run(mut self, bridge: Arc<Bridge>) {
         use gantry_protect::Error;
         let mut delay = Duration::from_secs(1);
+        // How many times in a row the console had no route to it.
+        let mut unrouted = 0u32;
         loop {
             if self.vault.view().waiting {
                 tracing::info!(
@@ -1146,6 +1167,10 @@ impl ProtectBridge {
             self.live.disconnected();
             crate::status::global().console_disconnected();
             let mut wait = delay;
+            unrouted = match &result {
+                Err(e) if cfg!(target_os = "macos") && no_route(e) => unrouted + 1,
+                _ => 0,
+            };
             match result {
                 Ok(()) => {
                     tracing::warn!("UniFi Protect closed the update stream; reconnecting");
@@ -1166,6 +1191,16 @@ impl ProtectBridge {
                         wait = REFUSED_DELAY;
                         tracing::warn!("UniFi Protect sign-in refused: {refused}; trying again in {} minutes", wait.as_secs() / 60);
                         self.vault.failed(&password, &refused.to_string());
+                    }
+                    // The first attempt of a new build often has no route
+                    // and the next one gets through, so one is not a sign.
+                    _ if unrouted >= 2 => {
+                        wait = BLOCKED_DELAY;
+                        // Said once, not every few seconds until it is allowed.
+                        if unrouted == 2 {
+                            tracing::warn!("{LOCAL_NETWORK_BLOCKED}. Trying again every {} seconds", wait.as_secs());
+                        }
+                        self.vault.failed(&password, LOCAL_NETWORK_BLOCKED);
                     }
                     _ => {
                         tracing::warn!("UniFi Protect connection lost: {e:#}");
@@ -2151,5 +2186,17 @@ mod unlock_tests {
                     .any(|c| c["type"] == kind::STATUS_ACTIVE && c["value"] == true)
             })
         })
+    }
+
+    #[test]
+    fn no_route_is_told_apart_from_other_connection_failures() {
+        let through = |kind| anyhow::Error::new(gantry_protect::Error::Connect(std::io::Error::from(kind))).context("signing in");
+        assert!(no_route(&through(std::io::ErrorKind::HostUnreachable)));
+        // What macOS actually returns: errno 65.
+        #[cfg(target_os = "macos")]
+        assert!(no_route(&anyhow::Error::new(gantry_protect::Error::Connect(std::io::Error::from_raw_os_error(65)))));
+        assert!(!no_route(&through(std::io::ErrorKind::ConnectionRefused)));
+        assert!(!no_route(&through(std::io::ErrorKind::TimedOut)));
+        assert!(!no_route(&anyhow::anyhow!("no route to host")));
     }
 }
