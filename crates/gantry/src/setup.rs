@@ -9,12 +9,14 @@
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use gantry_protect::{fetch_fingerprint, Client, Error, Fingerprint};
 
 use crate::keychain::{self, Failure};
 use crate::password::Secret;
+use crate::protect_bridge::LOCAL_NETWORK_BLOCKED;
 use crate::{client, config, daemon, service, tty, video};
 
 /// How the questions are asked, so that tests can answer them.
@@ -271,17 +273,68 @@ fn keep_password(username: &str, password: &Secret, ask: &mut dyn Prompter) -> R
 }
 
 /// Hands the password to a daemon that is waiting for it, if one is.
-fn hand_over(state_dir: &Path, password: Secret) {
-    let waiting = client::state(state_dir)
-        .is_ok_and(|state| state.console.is_some_and(|console| console.waiting_for_password));
-    if !waiting {
-        return;
+fn hand_over(state_dir: &Path, password: Secret, ask: &mut dyn Prompter) -> Result<()> {
+    let Some(console) = client::state(state_dir).ok().and_then(|state| state.console) else {
+        return Ok(());
+    };
+    // A service that read the password itself still has to get there.
+    if !console.waiting_for_password {
+        return until_connected(state_dir, ask);
     }
     match client::unlock(state_dir, password) {
         Ok(reply) if reply.signed_in => println!("The service is signed in. {} devices are published to HomeKit.", reply.devices),
-        Ok(reply) if reply.kept => println!("The service has the password and is still connecting ({}).", reply.detail),
+        Ok(reply) if reply.kept => {
+            println!("The service has the password and is connecting to the console.");
+            return until_connected(state_dir, ask);
+        }
         Ok(reply) => println!("The service could not sign in: {}", reply.detail),
         Err(why) => println!("The password could not be handed to the service: {why:#}"),
+    }
+    Ok(())
+}
+
+/// How long setup watches the service reach the console before it says
+/// what is in the way and asks.
+const CONNECT_PATIENCE: Duration = Duration::from_secs(15);
+
+/// Stays with the service until it has reached the console, saying what is
+/// in the way and waiting for the person to deal with it. Leaving is
+/// always possible: the service keeps trying on its own.
+fn until_connected(state_dir: &Path, ask: &mut dyn Prompter) -> Result<()> {
+    loop {
+        let started = std::time::Instant::now();
+        let problem = loop {
+            let console = client::state(state_dir).ok().and_then(|state| state.console).unwrap_or_default();
+            if console.connected {
+                println!("The service is signed in.");
+                return Ok(());
+            }
+            if started.elapsed() >= CONNECT_PATIENCE {
+                break console.problem;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        println!("\n{}\n", not_connected(problem.as_deref()));
+        if !ask.confirm("Check again?", true)? {
+            println!("The service keeps trying on its own. `gantry service status` says how it is doing.");
+            return Ok(());
+        }
+    }
+}
+
+/// What to tell someone whose service has not reached the console.
+fn not_connected(problem: Option<&str>) -> String {
+    match problem {
+        Some(LOCAL_NETWORK_BLOCKED) => format!(
+            "{}\n\n\
+             macOS has to be told that Gantry may talk to devices on your network. Look for a\n\
+             dialog asking to let Gantry find devices on local networks and choose Allow. If there\n\
+             is none, open System Settings, Privacy & Security, Local Network and switch Gantry on.\n\
+             The service tries again every few seconds, so there is nothing to restart.",
+            bold("The service cannot reach the console: it has no access to the local network.")
+        ),
+        Some(problem) => format!("The service has not reached the console yet: {problem}."),
+        None => "The service has not reached the console yet.".to_string(),
     }
 }
 
@@ -352,7 +405,7 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
         if stale {
             println!("The running daemon was started before this configuration. Restart it:\n\n    gantry service restart\n");
         } else {
-            hand_over(state_dir, password);
+            hand_over(state_dir, password, ask)?;
         }
     } else {
         println!("To run it yourself: gantry daemon");
@@ -369,12 +422,6 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
              with `gantry`: it shows the pairing code. In the Home app choose Add Accessory and scan\n\
              it, or choose More Options and pick Gantry."
         ),
-    }
-    if cfg!(target_os = "macos") {
-        println!(
-            "\nIf the service cannot reach the console (\"No route to host\"), allow it under System Settings,\n\
-             Privacy & Security, Local Network. macOS asks for this once."
-        );
     }
     Ok(())
 }
@@ -441,5 +488,15 @@ mod tests {
         assert_eq!(std::fs::metadata(config::path(&dir)).unwrap().permissions().mode() & 0o777, 0o600);
         assert_eq!(config::load(&dir).unwrap().protect.unwrap().host, "192.0.2.10");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_blocked_local_network_is_explained_not_just_named() {
+        let blocked = not_connected(Some(LOCAL_NETWORK_BLOCKED));
+        assert!(blocked.contains("Local Network") && blocked.contains("choose Allow"), "{blocked}");
+        assert!(blocked.contains("nothing to restart"), "{blocked}");
+        let other = not_connected(Some("the console closed the connection"));
+        assert!(other.contains("the console closed the connection") && !other.contains("Local Network"), "{other}");
+        assert!(!not_connected(None).contains("Local Network"));
     }
 }
