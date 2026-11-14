@@ -58,23 +58,6 @@ Or from source, with a recent Rust toolchain:
 cargo build --release
 ```
 
-### Coming from Harbormaster
-
-Gantry was called Harbormaster up to version 0.1.1. To keep your HomeKit
-pairing, move the old folder across before installing:
-
-```sh
-harbormaster service uninstall
-mv ~/Library/Application\ Support/harbormaster ~/Library/Application\ Support/gantry
-brew uninstall harbormaster
-brew install ultradotdev/tap/gantry
-gantry setup
-```
-
-Setup asks for the Protect password once more, because the Keychain item
-has a new name, and puts the service back. The bridge shows up in Home
-under its new name with the same devices.
-
 ## Set up
 
 ```sh

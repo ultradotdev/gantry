@@ -1,15 +1,22 @@
 [package]
-name = "gantry"
+name = "gantry-home"
+description = "HomeKit bridge for UniFi Protect, with a terminal dashboard"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "gantry"
+path = "src/main.rs"
 
 [dependencies]
 bytes = "1.12.1"
 anyhow = "1.0.104"
 libc = "0.2.191"
-gantry-hap = { version = "0.1.0", path = "../hap" }
-gantry-protect = { version = "0.1.0", path = "../protect" }
+gantry-hap = { version = "0.1.2", path = "../hap" }
+gantry-protect = { version = "0.1.2", path = "../protect" }
 qrcode = { version = "0.14.1", default-features = false }
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
