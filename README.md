@@ -66,8 +66,9 @@ gantry setup
 
 It asks for the console's address and an account, shows you the
 certificate the console presents so you can confirm it is yours, signs in
-once to prove the account works, and installs the service. The one step
-that needs administrator rights is printed for you to run.
+once to prove the account works, and installs the service. The one
+command that needs administrator rights is shown for you to copy and run
+in a second terminal window; setup waits while you do.
 
 Create an account for Gantry in UniFi OS first: a local-access-only
 admin with access to Protect. Full management lets Gantry switch

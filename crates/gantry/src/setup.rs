@@ -7,7 +7,7 @@
 //! only saves editing files. Running it again changes nothing that is
 //! already in place.
 
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead, Write};
 use std::path::Path;
 use std::time::Duration;
 
@@ -17,6 +17,7 @@ use gantry_protect::{fetch_fingerprint, Client, Error, Fingerprint};
 use crate::keychain::{self, Failure};
 use crate::password::Secret;
 use crate::protect_bridge::LOCAL_NETWORK_BLOCKED;
+use crate::say::{self, bold, done};
 use crate::{client, config, daemon, service, tty, video};
 
 /// How the questions are asked, so that tests can answer them.
@@ -27,6 +28,8 @@ pub trait Prompter {
     fn confirm(&mut self, prompt: &str, default: bool) -> Result<bool>;
     /// A password, typed unseen.
     fn secret(&mut self, prompt: &str) -> Result<Secret>;
+    /// Waits for Return. False when they would rather skip what follows.
+    fn proceed(&mut self, prompt: &str) -> Result<bool>;
 }
 
 struct Terminal;
@@ -72,6 +75,17 @@ impl Prompter for Terminal {
 
     fn secret(&mut self, prompt: &str) -> Result<Secret> {
         tty::read_password(prompt)
+    }
+
+    fn proceed(&mut self, prompt: &str) -> Result<bool> {
+        loop {
+            let answer = Self::read(&format!("{prompt} (or type s to skip): "))?;
+            match answer.to_lowercase().as_str() {
+                "" | "y" | "yes" => return Ok(true),
+                "s" | "skip" | "n" | "no" => return Ok(false),
+                _ => {}
+            }
+        }
     }
 }
 
@@ -156,18 +170,20 @@ async fn find_console(state_dir: &Path, ask: &mut dyn Prompter) -> Result<Consol
         }
         None => {
             println!(
-                "Gantry signs in to UniFi Protect with an account of its own. Create one in UniFi OS\n\
-                 under Admins & Users: a local-access-only admin with access to Protect. Full management\n\
-                 lets Gantry switch floodlights; view only is enough for everything else.\n"
+                "Gantry signs in to UniFi Protect with an account of its own. If you have not\n\
+                 made one yet, do that first, in UniFi OS under Admins & Users:\n\n  \
+                 - a local-access-only admin\n  \
+                 - with access to Protect: Full Management lets Gantry switch floodlights,\n    \
+                 View Only is enough for everything else\n"
             );
             let (host, port) = loop {
-                let typed = ask.line("Address of the console running UniFi Protect", None)?;
+                let typed = ask.line("Address of your console, such as 192.168.1.1", None)?;
                 match console_address(&typed) {
                     Some(address) => break address,
                     None => println!("That does not look like an address. An IP address such as 192.168.1.1 is what is wanted."),
                 }
             };
-            (host, port, ask.line("Username of that account", Some("gantry"))?)
+            (host, port, ask.line("Username of the account you made for Gantry", Some("gantry"))?)
         }
     };
     let port_number = port.unwrap_or(443);
@@ -180,9 +196,12 @@ async fn find_console(state_dir: &Path, ask: &mut dyn Prompter) -> Result<Consol
         .await
         .with_context(|| format!("connecting to {host}:{port_number}"))?;
     println!(
-        "\nThe console at {host} presents a certificate with this fingerprint:\n\n    {seen}\n\n\
-         Gantry will only ever talk to a console that presents exactly this certificate.\n\
-         Nothing has been sent to it yet."
+        "\nThe console at {host} identifies itself with a certificate. Its fingerprint:\n\n{}\n\n\
+         From now on Gantry only talks to a console that shows exactly this certificate,\n\
+         so nothing else on the network can pose as yours. Nothing has been sent to it yet.\n\
+         To check it, open https://{host} in a browser and look at the certificate's\n\
+         SHA-256 fingerprint.\n",
+        fingerprint_lines(&seen)
     );
     if !ask.confirm("Is that your console?", true)? {
         bail!("nothing was changed");
@@ -210,12 +229,12 @@ async fn sign_in(console: &Console, ask: &mut dyn Prompter) -> Result<(Secret, b
     for _ in 0..3 {
         let password = match candidate.take() {
             Some(password) => {
-                println!("Using the password already in the Keychain.");
+                println!("Using the password already in your Keychain.");
                 password
             }
             None => {
                 from_keychain = false;
-                let typed = ask.secret(&format!("Password for \"{}\": ", console.username))?;
+                let typed = ask.secret(&format!("Password of the Protect account \"{}\" (hidden as you type): ", console.username))?;
                 if typed.is_empty() {
                     bail!("no password was entered; nothing was changed");
                 }
@@ -227,17 +246,20 @@ async fn sign_in(console: &Console, ask: &mut dyn Prompter) -> Result<(Secret, b
             Ok(()) => {
                 let found = client.bootstrap().await?;
                 println!(
-                    "Signed in to {} ({}), Protect {}: {} cameras, {} lights, {} sensors.",
-                    found.nvr.name.as_deref().unwrap_or("the console"),
-                    found.nvr.model,
-                    found.nvr.version,
-                    found.cameras.len(),
-                    found.lights.len(),
-                    found.sensors.len()
+                    "{}\n  Found {}, {} and {}.",
+                    done(&format!(
+                        "Signed in to {} ({}, Protect {}).",
+                        found.nvr.name.as_deref().unwrap_or("the console"),
+                        found.nvr.model,
+                        found.nvr.version
+                    )),
+                    say::count(found.cameras.len(), "camera"),
+                    say::count(found.lights.len(), "light"),
+                    say::count(found.sensors.len(), "sensor")
                 );
                 return Ok((password, from_keychain));
             }
-            Err(Error::BadCredentials) => println!("The console rejected that username or password."),
+            Err(Error::BadCredentials) => println!("The console did not accept that username and password. Try again."),
             Err(other) => return Err(other).context("signing in to UniFi Protect"),
         }
     }
@@ -251,7 +273,11 @@ fn keep_password(username: &str, password: &Secret, ask: &mut dyn Prompter) -> R
         println!("There is no password store on this system yet, so `gantry unlock` will ask for the password.");
         return Ok(());
     }
-    if !ask.confirm("Keep the password in your login Keychain, so that it need not be typed again?", true)? {
+    println!(
+        "\nThe service asks for this password each time this Mac restarts. Gantry can keep it\n\
+         in your Mac's login Keychain, so that you never have to type it again."
+    );
+    if !ask.confirm("Keep it in the Keychain?", true)? {
         println!("`gantry unlock` will ask for it instead.");
         return Ok(());
     }
@@ -263,7 +289,7 @@ fn keep_password(username: &str, password: &Secret, ask: &mut dyn Prompter) -> R
         keychain::lock();
     }
     match outcome {
-        Ok(()) => println!("Stored in the Keychain."),
+        Ok(()) => println!("{}", done("Stored in the Keychain.")),
         Err(why) => crate::account_lines::could_not_store(
             &why,
             &keychain::store_command(keychain::PROTECT_SERVICE, username),
@@ -282,9 +308,11 @@ fn hand_over(state_dir: &Path, password: Secret, ask: &mut dyn Prompter) -> Resu
         return until_connected(state_dir, ask);
     }
     match client::unlock(state_dir, password) {
-        Ok(reply) if reply.signed_in => println!("The service is signed in. {} devices are published to HomeKit.", reply.devices),
+        Ok(reply) if reply.signed_in => {
+            println!("{}", done(&format!("The service is signed in, with {} ready for HomeKit.", say::count(reply.devices, "device"))));
+        }
         Ok(reply) if reply.kept => {
-            println!("The service has the password and is connecting to the console.");
+            println!("The service has the password and is connecting to the console...");
             return until_connected(state_dir, ask);
         }
         Ok(reply) => println!("The service could not sign in: {}", reply.detail),
@@ -293,24 +321,53 @@ fn hand_over(state_dir: &Path, password: Secret, ask: &mut dyn Prompter) -> Resu
     Ok(())
 }
 
-/// Waits for the owner to run the administrator commands just printed,
-/// and says whether the service then came up. Setup goes on without it
-/// when they would rather do that later.
-fn owner_started_it(state_dir: &Path, ask: &mut dyn Prompter) -> Result<bool> {
+/// What the owner is asked to do to start the service, step by step.
+fn owner_instructions(command: &str, in_the_way: Option<u32>, over_ssh: bool) -> String {
+    let window = if over_ssh {
+        "Open a second terminal window and connect to this Mac in it, as you did here."
+    } else {
+        "Open a second terminal window. In Terminal that is Command-N."
+    };
+    let mut text = format!(
+        "{}\n\
+         It takes administrator rights, so Gantry leaves it to you. This window waits.\n\n  \
+         1. {window}\n  \
+         2. Copy the command between the two lines below and paste it there.\n  \
+         3. Press Return, then type your Mac password when asked. Nothing shows\n     \
+         as you type it.\n  \
+         4. Come back to this window.\n\n{}\n",
+        bold("One command is left: it starts the service."),
+        say::copy_block(command)
+    );
+    if let Some(pid) = in_the_way {
+        text.push_str(&format!("\n{}", service::make_way(pid)));
+    }
+    text
+}
+
+/// Shows the owner the administrator command that is theirs to run and
+/// waits while they do, then says whether the service came up. Setup
+/// goes on without it when they would rather do that later.
+fn owner_started_it(state_dir: &Path, command: &str, in_the_way: Option<u32>, ask: &mut dyn Prompter) -> Result<bool> {
+    let over_ssh = std::env::var_os("SSH_CONNECTION").is_some();
+    println!("\n{}", owner_instructions(command, in_the_way, over_ssh));
     loop {
-        if !ask.confirm("Run those two commands in another terminal window. Have they finished?", true)? {
-            println!("When they have, give the service the Protect password with:\n\n    gantry unlock\n");
+        if !ask.proceed("Press Return here once the command has finished")? {
+            println!("When you have run it, give the service the Protect password with:\n\n    gantry unlock\n");
             return Ok(false);
         }
         let started = std::time::Instant::now();
         while started.elapsed() < SERVICE_PATIENCE {
             if client::state(state_dir).is_ok() {
-                println!("The service is running.");
+                println!("{}", done("The service is running. It starts again whenever this Mac does."));
                 return Ok(true);
             }
             std::thread::sleep(Duration::from_millis(500));
         }
-        println!("The service is not answering yet. Check that both commands ran without an error.");
+        println!(
+            "\nThe service is not answering yet. Look at the other window: if the command\n\
+             printed an error, or is still waiting for your password, deal with that first."
+        );
     }
 }
 
@@ -330,7 +387,7 @@ fn until_connected(state_dir: &Path, ask: &mut dyn Prompter) -> Result<()> {
         let problem = loop {
             let console = client::state(state_dir).ok().and_then(|state| state.console).unwrap_or_default();
             if console.connected {
-                println!("The service is signed in.");
+                println!("{}", done("The service is signed in to the console."));
                 return Ok(());
             }
             if started.elapsed() >= CONNECT_PATIENCE {
@@ -339,7 +396,7 @@ fn until_connected(state_dir: &Path, ask: &mut dyn Prompter) -> Result<()> {
             std::thread::sleep(Duration::from_millis(500));
         };
         println!("\n{}\n", not_connected(problem.as_deref()));
-        if !ask.confirm("Check again?", true)? {
+        if !ask.proceed("Press Return to check again")? {
             println!("The service keeps trying on its own. `gantry service status` says how it is doing.");
             return Ok(());
         }
@@ -362,27 +419,26 @@ fn not_connected(problem: Option<&str>) -> String {
     }
 }
 
-/// Bold where the output is a terminal, plain where it is a file or a pipe.
-fn bold(text: &str) -> String {
-    if std::io::stdout().is_terminal() {
-        format!("\x1b[1m{text}\x1b[0m")
-    } else {
-        text.to_owned()
-    }
-}
-
 /// What setup opens with: whose questions these are, and how many.
 fn banner() -> String {
     format!(
         "\n  {}\n  HomeKit bridge for UniFi Protect\n\n  \
          Setup is four steps: find your console, sign in, run as a service, add to Home.\n  \
-         It is safe to run again; nothing already in place is changed.\n",
+         It takes a couple of minutes, and is safe to run again: nothing already in\n  \
+         place is changed.\n",
         bold(&format!("Gantry {}", env!("CARGO_PKG_VERSION")))
     )
 }
 
 fn step(number: u8, title: &str) -> String {
-    bold(&format!("Step {number} of 4  {title}"))
+    say::heading(&format!("Step {number} of 4 · {title}"))
+}
+
+/// A fingerprint on two lines, so that it fits a terminal of any width.
+fn fingerprint_lines(fingerprint: &Fingerprint) -> String {
+    let text = fingerprint.to_string();
+    let bytes: Vec<&str> = text.split(':').collect();
+    bytes.chunks(16).map(|half| format!("    {}", half.join(":"))).collect::<Vec<_>>().join("\n")
 }
 
 /// The pairing code of a running, unpaired bridge, drawn for the Home
@@ -400,14 +456,14 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
     daemon::create_private_dir(state_dir)?;
     let runtime = tokio::runtime::Runtime::new()?;
 
-    println!("{}\n", step(1, "The UniFi Protect console"));
+    println!("{}\n", step(1, "Find your console"));
     let console = runtime.block_on(find_console(state_dir, ask))?;
 
-    println!("\n{}\n", step(2, "Signing in"));
+    println!("\n{}\n", step(2, "Sign in"));
     let (password, from_keychain) = runtime.block_on(sign_in(&console, ask))?;
     if let Some(text) = &console.config {
         write_config(state_dir, text)?;
-        println!("Wrote {}.", config::path(state_dir).display());
+        println!("{}", done(&format!("Saved your settings in {}.", config::path(state_dir).display())));
     }
     if !from_keychain {
         keep_password(&console.username, &password, ask)?;
@@ -416,10 +472,14 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
         println!("\nLive video and recording need ffmpeg, which was not found. With Homebrew: brew install ffmpeg");
     }
 
-    println!("\n{}\n", step(3, "Running as a service"));
+    println!("\n{}\n", step(3, "Run as a service"));
     // A daemon started before the console was configured does not know of it.
     let stale = console.config.is_some() && client::state(state_dir).is_ok();
-    if ask.confirm("Install Gantry as a service that starts at boot and is restarted if it stops?", true)? {
+    println!(
+        "As a service, Gantry starts whenever this Mac starts, with nobody logged in, and\n\
+         is started again if it ever stops."
+    );
+    if ask.confirm("Install it as a service?", true)? {
         let options = service::Options {
             scope: if user_agent { service::Scope::User } else { service::Scope::System },
             listen: None,
@@ -428,23 +488,31 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
         let installed = service::install_step(state_dir, &options)?;
         if stale {
             println!("The running daemon was started before this configuration. Restart it:\n\n    gantry service restart\n");
-        } else if installed == service::Installed::Running || owner_started_it(state_dir, ask)? {
-            hand_over(state_dir, password, ask)?;
+        } else {
+            let running = match &installed {
+                service::Installed::Running => true,
+                service::Installed::AwaitsOwner { command, in_the_way } => owner_started_it(state_dir, command, *in_the_way, ask)?,
+            };
+            if running {
+                hand_over(state_dir, password, ask)?;
+            }
         }
     } else {
         println!("To run it yourself: gantry daemon");
     }
 
-    println!("\n{}\n", step(4, "Adding it to Home"));
+    println!("\n{}\n", step(4, "Add it to Home"));
     match pairing_code(state_dir) {
         Some(code) => println!(
-            "In the Home app choose Add Accessory, then scan this code or type it in.\n\n{code}\n\n\
-             The dashboard shows it again until the bridge is paired: gantry"
+            "On your iPhone, open the Home app, tap + and choose Add Accessory. Then scan\n\
+             this code, or choose More Options, pick Gantry and type the setup code.\n\n{code}\n\n\
+             To see the code again, and everything else, open the dashboard:\n\n    gantry\n"
         ),
         None => println!(
-            "Once the service is running and has the password (`gantry unlock`), open the dashboard\n\
-             with `gantry`: it shows the pairing code. In the Home app choose Add Accessory and scan\n\
-             it, or choose More Options and pick Gantry."
+            "Once the service is running and has the password (`gantry unlock`), open the\n\
+             dashboard, which shows the pairing code:\n\n    gantry\n\n\
+             Then on your iPhone open the Home app, tap + and choose Add Accessory. Scan the\n\
+             code, or choose More Options and pick Gantry."
         ),
     }
     Ok(())
@@ -471,7 +539,10 @@ mod tests {
         assert!(banner.contains(&format!("Gantry {}", env!("CARGO_PKG_VERSION"))), "{banner}");
         assert!(banner.contains("HomeKit bridge for UniFi Protect") && banner.contains("four steps"));
         // Tests do not run on a terminal, so nothing is styled.
-        assert_eq!(step(2, "Signing in"), "Step 2 of 4  Signing in");
+        assert!(step(2, "Sign in").starts_with("── Step 2 of 4 · Sign in ─"));
+        let fingerprint = fingerprint_lines(&pin());
+        assert_eq!(fingerprint.lines().count(), 2, "{fingerprint}");
+        assert_eq!(fingerprint.replace("\n    ", ":").trim(), pin().to_string());
         assert_eq!(pairing_code(Path::new("/nonexistent/gantry")), None);
     }
 
@@ -512,6 +583,19 @@ mod tests {
         assert_eq!(std::fs::metadata(config::path(&dir)).unwrap().permissions().mode() & 0o777, 0o600);
         assert_eq!(config::load(&dir).unwrap().protect.unwrap().host, "192.0.2.10");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_administrator_command_comes_with_what_to_do_with_it() {
+        let told = owner_instructions("sudo /bin/true", None, false);
+        assert!(told.contains("\n\nsudo /bin/true\n\n"), "the command stands on a line of its own: {told}");
+        for wanted in ["Command-N", "Copy the command", "type your Mac password", "Come back to this window"] {
+            assert!(told.contains(wanted), "{wanted}: {told}");
+        }
+        assert!(!told.contains("kill"));
+        let remote = owner_instructions("sudo /bin/true", Some(41), true);
+        assert!(remote.contains("connect to this Mac") && !remote.contains("Command-N"), "{remote}");
+        assert!(remote.contains("kill 41"), "{remote}");
     }
 
     #[test]
