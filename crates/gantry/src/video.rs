@@ -12,11 +12,11 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use harbormaster_hap::camera::{
+use gantry_hap::camera::{
     self, kind, parse_selected, parse_setup, Command, SelectedAudio, SelectedVideo, SetupRequest, SetupResponse,
 };
-use harbormaster_hap::model::status;
-use harbormaster_hap::{Accessory, Database};
+use gantry_hap::model::status;
+use gantry_hap::{Accessory, Database};
 use serde_json::Value;
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -911,9 +911,9 @@ fn without_addresses(line: &str) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use harbormaster_hap::camera::Srtp;
-    use harbormaster_hap::model::WriteContext;
-    use harbormaster_hap::Info;
+    use gantry_hap::camera::Srtp;
+    use gantry_hap::model::WriteContext;
+    use gantry_hap::Info;
     use std::time::Duration;
 
     fn request(ip: &str, port: u16) -> SetupRequest {
@@ -1125,7 +1125,7 @@ pub(crate) mod tests {
 
     /// Builds the two controller writes the way an Apple device would.
     fn controller_writes(port: u16, command: u8) -> (Value, Value) {
-        use harbormaster_hap::camera::test_support::{selected_value, setup_value};
+        use gantry_hap::camera::test_support::{selected_value, setup_value};
         (setup_value("127.0.0.1", port), selected_value(command, 640, 480, 30, 299))
     }
 
@@ -1135,7 +1135,7 @@ pub(crate) mod tests {
         let (setup, _) = controller_writes(50000, 1);
         db.write(2, ids.setup, &setup, &context(1)).unwrap();
         let answer = db.read(2, ids.setup).unwrap();
-        assert_eq!(harbormaster_hap::camera::test_support::setup_status(&answer), Some(2));
+        assert_eq!(gantry_hap::camera::test_support::setup_status(&answer), Some(2));
     }
 
     /// Two sockets two ports apart, the way a controller lays out the
@@ -1266,7 +1266,7 @@ pub(crate) mod tests {
 
         db.write(2, ids.setup, &setup, &context(7)).unwrap();
         let answer = db.read(2, ids.setup).unwrap();
-        assert_eq!(harbormaster_hap::camera::test_support::setup_status(&answer), Some(0));
+        assert_eq!(gantry_hap::camera::test_support::setup_status(&answer), Some(0));
         db.write(2, ids.selected, &start, &context(7)).unwrap();
         assert_eq!(db.read(2, ids.status).unwrap(), camera::streaming_status(camera::STATUS_IN_USE));
 

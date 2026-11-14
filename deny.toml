@@ -2,7 +2,7 @@
 # change and once a week, since advisories appear without any change here.
 
 [graph]
-# Harbormaster ships for these; a dependency used only elsewhere is not shipped.
+# Gantry ships for these; a dependency used only elsewhere is not shipped.
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 [advisories]

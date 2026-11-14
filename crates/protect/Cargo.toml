@@ -1,5 +1,5 @@
 [package]
-name = "harbormaster-protect"
+name = "gantry-protect"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

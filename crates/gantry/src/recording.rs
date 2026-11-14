@@ -15,10 +15,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use harbormaster_hap::datastream::{DataStreams, RecordingSource, Refusal};
-use harbormaster_hap::model::status;
-use harbormaster_hap::recording::{self, kind, SelectedRecording};
-use harbormaster_hap::{Accessory, Database, SnapshotReason};
+use gantry_hap::datastream::{DataStreams, RecordingSource, Refusal};
+use gantry_hap::model::status;
+use gantry_hap::recording::{self, kind, SelectedRecording};
+use gantry_hap::{Accessory, Database, SnapshotReason};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -661,9 +661,9 @@ fn ffmpeg_args(format: &SelectedRecording, audio: bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use harbormaster_hap::model::WriteContext;
-    use harbormaster_hap::recording::test_support::{selected_value, transport_answer, transport_setup_value};
-    use harbormaster_hap::Info;
+    use gantry_hap::model::WriteContext;
+    use gantry_hap::recording::test_support::{selected_value, transport_answer, transport_setup_value};
+    use gantry_hap::Info;
 
     fn format() -> SelectedRecording {
         recording::parse_selected(&selected_value(640, 480, 30, 800, 5)).unwrap()
@@ -858,9 +858,9 @@ mod tests {
             let mut accessory = Accessory::new(2, &info);
             let ids = add_services(&mut accessory, 300, &[(640, 480, 30)], recording::TRIGGER_MOTION, None);
             // Stands in for a stream service's on/off switch, at id 400.
-            let switch = harbormaster_hap::Characteristic {
+            let switch = gantry_hap::Characteristic {
                 writable: true,
-                ..harbormaster_hap::Characteristic::sensor("B0", harbormaster_hap::Format::Uint8, json!(1))
+                ..gantry_hap::Characteristic::sensor("B0", gantry_hap::Format::Uint8, json!(1))
             };
             assert_eq!(accessory.add_service_at(399, "110", false, vec![switch]), [400]);
             let db = Database::new();

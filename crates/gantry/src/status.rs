@@ -11,8 +11,8 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use harbormaster_hap::model::kind;
-use harbormaster_hap::Database;
+use gantry_hap::model::kind;
+use gantry_hap::Database;
 use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -238,7 +238,7 @@ pub fn watch(status: &'static Status, db: &Arc<Database>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use harbormaster_hap::{Accessory, Characteristic, Format, Info};
+    use gantry_hap::{Accessory, Characteristic, Format, Info};
 
     #[test]
     fn guards_track_viewers_and_recordings() {

@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use harbormaster_hap::model::kind;
-use harbormaster_hap::recording::kind::{ACTIVE, CAMERA_RECORDING_MANAGEMENT};
-use harbormaster_hap::recording::TRIGGER_MOTION;
-use harbormaster_hap::{Accessory, Bridge, Characteristic, Database, Format, Info, Store};
+use gantry_hap::model::kind;
+use gantry_hap::recording::kind::{ACTIVE, CAMERA_RECORDING_MANAGEMENT};
+use gantry_hap::recording::TRIGGER_MOTION;
+use gantry_hap::{Accessory, Bridge, Characteristic, Database, Format, Info, Store};
 use serde_json::{json, Value};
 
 use crate::overrides::{self, Overrides};

@@ -198,7 +198,7 @@ mod backend {
             Ok(Self {
                 daemon: ServiceDaemon::new().map_err(|e| Error(e.to_string()))?,
                 name: name.to_owned(),
-                host: format!("harbormaster-{}.local.", device_id.replace(':', "").to_lowercase()),
+                host: format!("gantry-{}.local.", device_id.replace(':', "").to_lowercase()),
                 port,
             })
         }

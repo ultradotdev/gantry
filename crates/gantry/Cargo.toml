@@ -1,5 +1,5 @@
 [package]
-name = "harbormaster"
+name = "gantry"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 bytes = "1.12.1"
 anyhow = "1.0.104"
 libc = "0.2.191"
-harbormaster-hap = { version = "0.1.0", path = "../hap" }
-harbormaster-protect = { version = "0.1.0", path = "../protect" }
+gantry-hap = { version = "0.1.0", path = "../hap" }
+gantry-protect = { version = "0.1.0", path = "../protect" }
 qrcode = { version = "0.14.1", default-features = false }
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -28,7 +28,7 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"], optional = true }
 
 [features]
-# `harbormaster mock-console`: a pretend UniFi Protect console for testing
+# `gantry mock-console`: a pretend UniFi Protect console for testing
 # a fresh install (docs/mock-console.md). It is of no use to someone
 # running the bridge, so it is off by default and released builds do not
 # contain it. Build with `--features mock-console` to get it.

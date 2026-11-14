@@ -1,4 +1,4 @@
-//! `harbormaster setup`: the first run, asked as questions.
+//! `gantry setup`: the first run, asked as questions.
 //!
 //! It finds the UniFi Protect console, shows the certificate it presents
 //! for the owner to confirm, signs in once to prove the account works,
@@ -11,7 +11,7 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use harbormaster_protect::{fetch_fingerprint, Client, Error, Fingerprint};
+use gantry_protect::{fetch_fingerprint, Client, Error, Fingerprint};
 
 use crate::keychain::{self, Failure};
 use crate::password::Secret;
@@ -154,9 +154,9 @@ async fn find_console(state_dir: &Path, ask: &mut dyn Prompter) -> Result<Consol
         }
         None => {
             println!(
-                "Harbormaster signs in to UniFi Protect with an account of its own. Create one in UniFi OS\n\
+                "Gantry signs in to UniFi Protect with an account of its own. Create one in UniFi OS\n\
                  under Admins & Users: a local-access-only admin with access to Protect. Full management\n\
-                 lets Harbormaster switch floodlights; view only is enough for everything else.\n"
+                 lets Gantry switch floodlights; view only is enough for everything else.\n"
             );
             let (host, port) = loop {
                 let typed = ask.line("Address of the console running UniFi Protect", None)?;
@@ -165,7 +165,7 @@ async fn find_console(state_dir: &Path, ask: &mut dyn Prompter) -> Result<Consol
                     None => println!("That does not look like an address. An IP address such as 192.168.1.1 is what is wanted."),
                 }
             };
-            (host, port, ask.line("Username of that account", Some("harbormaster"))?)
+            (host, port, ask.line("Username of that account", Some("gantry"))?)
         }
     };
     let port_number = port.unwrap_or(443);
@@ -179,7 +179,7 @@ async fn find_console(state_dir: &Path, ask: &mut dyn Prompter) -> Result<Consol
         .with_context(|| format!("connecting to {host}:{port_number}"))?;
     println!(
         "\nThe console at {host} presents a certificate with this fingerprint:\n\n    {seen}\n\n\
-         Harbormaster will only ever talk to a console that presents exactly this certificate.\n\
+         Gantry will only ever talk to a console that presents exactly this certificate.\n\
          Nothing has been sent to it yet."
     );
     if !ask.confirm("Is that your console?", true)? {
@@ -242,15 +242,15 @@ async fn sign_in(console: &Console, ask: &mut dyn Prompter) -> Result<(Secret, b
     bail!("the console rejected the password three times; nothing was changed")
 }
 
-/// Offers to keep the password in the Keychain, where `harbormaster
+/// Offers to keep the password in the Keychain, where `gantry
 /// unlock` finds it.
 fn keep_password(username: &str, password: &Secret, ask: &mut dyn Prompter) -> Result<()> {
     if !cfg!(target_os = "macos") {
-        println!("There is no password store on this system yet, so `harbormaster unlock` will ask for the password.");
+        println!("There is no password store on this system yet, so `gantry unlock` will ask for the password.");
         return Ok(());
     }
     if !ask.confirm("Keep the password in your login Keychain, so that it need not be typed again?", true)? {
-        println!("`harbormaster unlock` will ask for it instead.");
+        println!("`gantry unlock` will ask for it instead.");
         return Ok(());
     }
     let mut outcome = keychain::store(keychain::PROTECT_SERVICE, username, password);
@@ -300,7 +300,7 @@ fn banner() -> String {
         "\n  {}\n  HomeKit bridge for UniFi Protect\n\n  \
          Setup is four steps: find your console, sign in, run as a service, add to Home.\n  \
          It is safe to run again; nothing already in place is changed.\n",
-        bold(&format!("\u{2693} Harbormaster {}", env!("CARGO_PKG_VERSION")))
+        bold(&format!("Gantry {}", env!("CARGO_PKG_VERSION")))
     )
 }
 
@@ -342,7 +342,7 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
     println!("\n{}\n", step(3, "Running as a service"));
     // A daemon started before the console was configured does not know of it.
     let stale = console.config.is_some() && client::state(state_dir).is_ok();
-    if ask.confirm("Install Harbormaster as a service that starts at boot and is restarted if it stops?", true)? {
+    if ask.confirm("Install Gantry as a service that starts at boot and is restarted if it stops?", true)? {
         let options = service::Options {
             scope: if user_agent { service::Scope::User } else { service::Scope::System },
             listen: None,
@@ -350,24 +350,24 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
         };
         service::install(state_dir, &options)?;
         if stale {
-            println!("The running daemon was started before this configuration. Restart it:\n\n    harbormaster service restart\n");
+            println!("The running daemon was started before this configuration. Restart it:\n\n    gantry service restart\n");
         } else {
             hand_over(state_dir, password);
         }
     } else {
-        println!("To run it yourself: harbormaster daemon");
+        println!("To run it yourself: gantry daemon");
     }
 
     println!("\n{}\n", step(4, "Adding it to Home"));
     match pairing_code(state_dir) {
         Some(code) => println!(
             "In the Home app choose Add Accessory, then scan this code or type it in.\n\n{code}\n\n\
-             The dashboard shows it again until the bridge is paired: harbormaster"
+             The dashboard shows it again until the bridge is paired: gantry"
         ),
         None => println!(
-            "Once the service is running and has the password (`harbormaster unlock`), open the dashboard\n\
-             with `harbormaster`: it shows the pairing code. In the Home app choose Add Accessory and scan\n\
-             it, or choose More Options and pick Harbormaster."
+            "Once the service is running and has the password (`gantry unlock`), open the dashboard\n\
+             with `gantry`: it shows the pairing code. In the Home app choose Add Accessory and scan\n\
+             it, or choose More Options and pick Gantry."
         ),
     }
     if cfg!(target_os = "macos") {
@@ -397,11 +397,11 @@ mod tests {
     #[test]
     fn the_opening_names_the_program_and_the_steps_are_numbered() {
         let banner = banner();
-        assert!(banner.contains(&format!("Harbormaster {}", env!("CARGO_PKG_VERSION"))), "{banner}");
+        assert!(banner.contains(&format!("Gantry {}", env!("CARGO_PKG_VERSION"))), "{banner}");
         assert!(banner.contains("HomeKit bridge for UniFi Protect") && banner.contains("four steps"));
         // Tests do not run on a terminal, so nothing is styled.
         assert_eq!(step(2, "Signing in"), "Step 2 of 4  Signing in");
-        assert_eq!(pairing_code(Path::new("/nonexistent/harbormaster")), None);
+        assert_eq!(pairing_code(Path::new("/nonexistent/gantry")), None);
     }
 
     fn pin() -> Fingerprint {

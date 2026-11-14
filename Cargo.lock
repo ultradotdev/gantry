@@ -747,6 +747,75 @@ dependencies = [
 ]
 
 [[package]]
+name = "gantry"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "flate2",
+ "futures-util",
+ "gantry-hap",
+ "gantry-protect",
+ "libc",
+ "qrcode",
+ "ratatui",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "zeroize",
+]
+
+[[package]]
+name = "gantry-hap"
+version = "0.1.1"
+dependencies = [
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "hkdf",
+ "httparse",
+ "mdns-sd",
+ "num-bigint 0.5.1",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subtle",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "gantry-protect"
+version = "0.1.1"
+dependencies = [
+ "bytes",
+ "flate2",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+ "tracing",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -789,75 +858,6 @@ dependencies = [
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "harbormaster"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "bytes",
- "flate2",
- "futures-util",
- "harbormaster-hap",
- "harbormaster-protect",
- "libc",
- "qrcode",
- "ratatui",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
- "toml",
- "tracing",
- "tracing-subscriber",
- "zeroize",
-]
-
-[[package]]
-name = "harbormaster-hap"
-version = "0.1.1"
-dependencies = [
- "chacha20poly1305",
- "ed25519-dalek",
- "getrandom 0.4.3",
- "hkdf",
- "httparse",
- "mdns-sd",
- "num-bigint 0.5.1",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "subtle",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
- "x25519-dalek",
-]
-
-[[package]]
-name = "harbormaster-protect"
-version = "0.1.1"
-dependencies = [
- "bytes",
- "flate2",
- "futures-util",
- "http-body-util",
- "hyper",
- "hyper-util",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "thiserror 2.0.21",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
- "tracing",
 ]
 
 [[package]]

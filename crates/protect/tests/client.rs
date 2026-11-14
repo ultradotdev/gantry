@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use harbormaster_protect::{fetch_fingerprint, Client, Error, Fingerprint};
+use gantry_protect::{fetch_fingerprint, Client, Error, Fingerprint};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -57,7 +57,7 @@ fn answer(request: &str, behaviour: Behaviour) -> String {
         ("POST /api/auth/login HTTP/1.1", Behaviour::TwoFactor) => reply("499 MFA", "", "{}"),
         ("POST /api/auth/login HTTP/1.1", _) => {
             let json: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-            if json["username"] == "harbormaster" && json["password"] == password() {
+            if json["username"] == "gantry" && json["password"] == password() {
                 reply(
                     "200 OK",
                     "Set-Cookie: OTHER=1; Path=/\r\nSet-Cookie: TOKEN=session-1; Path=/; HttpOnly\r\nX-CSRF-Token: csrf-1\r\n",
@@ -151,7 +151,7 @@ async fn signs_in_and_reads_inventory() {
     let mut client = Client::new("localhost", console.port, console.fingerprint);
     assert!(matches!(client.bootstrap().await, Err(Error::NotSignedIn)));
 
-    client.login("harbormaster", &password()).await.unwrap();
+    client.login("gantry", &password()).await.unwrap();
     let bootstrap = client.bootstrap().await.unwrap();
     assert_eq!(bootstrap.nvr.name.as_deref(), Some("Test NVR"));
     assert_eq!(bootstrap.cameras.len(), 1);
@@ -163,12 +163,12 @@ async fn signs_in_and_reads_inventory() {
 async fn reports_bad_credentials_and_two_factor_accounts() {
     let console = start(Behaviour::Normal).await;
     let mut client = Client::new("localhost", console.port, console.fingerprint);
-    assert!(matches!(client.login("harbormaster", &format!("{}x", password())).await, Err(Error::BadCredentials)));
+    assert!(matches!(client.login("gantry", &format!("{}x", password())).await, Err(Error::BadCredentials)));
     assert!(matches!(client.bootstrap().await, Err(Error::NotSignedIn)));
 
     let console = start(Behaviour::TwoFactor).await;
     let mut client = Client::new("localhost", console.port, console.fingerprint);
-    assert!(matches!(client.login("harbormaster", &password()).await, Err(Error::TwoFactorRequired)));
+    assert!(matches!(client.login("gantry", &password()).await, Err(Error::TwoFactorRequired)));
 }
 
 #[tokio::test]
@@ -177,7 +177,7 @@ async fn wrong_certificate_stops_before_credentials_are_sent() {
     let impostor = start(Behaviour::Normal).await;
     // Pinned to one console's certificate but pointed at the other.
     let mut client = Client::new("localhost", impostor.port, console.fingerprint);
-    let error = client.login("harbormaster", &password()).await.unwrap_err();
+    let error = client.login("gantry", &password()).await.unwrap_err();
     assert!(matches!(error, Error::CertificateMismatch(_)), "{error}");
     assert!(error.to_string().contains(&impostor.fingerprint.to_string()), "{error}");
     assert_eq!(impostor.requests.load(Ordering::SeqCst), 0, "no request may reach an unpinned server");
@@ -194,7 +194,7 @@ async fn reads_fingerprint_without_sending_a_request() {
 async fn console_without_protect_is_reported_clearly() {
     let console = start(Behaviour::NoProtect).await;
     let mut client = Client::new("localhost", console.port, console.fingerprint);
-    client.login("harbormaster", &password()).await.unwrap();
+    client.login("gantry", &password()).await.unwrap();
     assert!(matches!(client.bootstrap().await, Err(Error::ProtectNotFound)));
 }
 
@@ -212,7 +212,7 @@ async fn fetches_snapshots_and_refuses_odd_camera_ids() {
     let console = start(Behaviour::Normal).await;
     let mut client = Client::new("localhost", console.port, console.fingerprint);
     assert!(matches!(client.snapshot("c1", 640, 480).await, Err(Error::NotSignedIn)));
-    client.login("harbormaster", &password()).await.unwrap();
+    client.login("gantry", &password()).await.unwrap();
     assert_eq!(&client.snapshot("c1", 640, 480).await.unwrap()[..], b"JPEG-640");
     assert_eq!(&client.package_snapshot("c1", 640, 480).await.unwrap()[..], b"PACKAGE");
     assert!(matches!(client.package_snapshot("../x", 1, 1).await, Err(Error::Protocol(_))));
@@ -229,7 +229,7 @@ async fn changes_a_device_and_reports_refusals() {
     let mut client = Client::new("localhost", console.port, console.fingerprint);
     let on = serde_json::json!({"lightOnSettings": {"isLedForceOn": true}});
     assert!(matches!(client.update_device("lights", "l1", &on).await, Err(Error::NotSignedIn)));
-    client.login("harbormaster", &password()).await.unwrap();
+    client.login("gantry", &password()).await.unwrap();
     client.update_device("lights", "l1", &on).await.unwrap();
     assert!(matches!(client.update_device("lights", "readonly", &on).await, Err(Error::Forbidden)));
     assert!(matches!(client.update_device("lights", "missing", &on).await, Err(Error::Status(_))));

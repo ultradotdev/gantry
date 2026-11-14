@@ -181,7 +181,7 @@ pub fn tidy_size(width: u32, height: u32) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use harbormaster_protect::{Decoder, Segment};
+    use gantry_protect::{Decoder, Segment};
 
     fn boxed(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
         let mut out = ((payload.len() + 8) as u32).to_be_bytes().to_vec();

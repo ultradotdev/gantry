@@ -1,5 +1,5 @@
 [package]
-name = "harbormaster-hap"
+name = "gantry-hap"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

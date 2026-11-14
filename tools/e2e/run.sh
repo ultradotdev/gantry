@@ -10,7 +10,7 @@
 set -u
 V="${1:?virtualenv parent directory required}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BIN="$HERE/../../target/debug/harbormaster"
+BIN="$HERE/../../target/debug/gantry"
 W="$(cd "$HERE/../.." && pwd)/target/e2e"
 cargo build -q --manifest-path "$HERE/../../Cargo.toml" || exit 1
 start() { "$BIN" daemon --state-dir "$W/state" --listen 0.0.0.0:51900 --demo >> "$W/state/bridge.log" 2>&1 & PID=$!; sleep 2; }

@@ -1,4 +1,4 @@
-"""Drive a running Harbormaster bridge with the aiohomekit controller."""
+"""Drive a running Gantry bridge with the aiohomekit controller."""
 import asyncio, json, sys, tempfile, pathlib
 
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf

@@ -440,7 +440,7 @@ mod tests {
         assert!(defs.iter().find(|d| d.name == "Back Door").unwrap().features.contact);
         assert!(defs.iter().find(|d| d.name == "Laundry Floor").unwrap().features.leak);
         // It must parse as the client's typed model as well.
-        let typed: harbormaster_protect::model::Bootstrap = serde_json::from_value(site.bootstrap().clone()).unwrap();
+        let typed: gantry_protect::model::Bootstrap = serde_json::from_value(site.bootstrap().clone()).unwrap();
         assert_eq!((typed.cameras.len(), typed.lights.len(), typed.sensors.len(), typed.chimes.len()), (4, 1, 3, 1));
     }
 
@@ -451,7 +451,7 @@ mod tests {
         let mut seen = Vec::new();
         for scene in SCRIPT {
             for packet in scene.start(&mut site, 3).into_iter().chain(scene.end(&mut site)) {
-                let update = harbormaster_protect::decode_packet(&packet).unwrap();
+                let update = gantry_protect::decode_packet(&packet).unwrap();
                 assert!(update.new_update_id.is_some(), "{update:?}");
                 seen.push((update.model_key, update.action));
             }
@@ -470,7 +470,7 @@ mod tests {
     fn forcing_the_floodlight_on_turns_it_on() {
         let mut site = Site::default();
         let updates = site.patch("lights", FLOODLIGHT, &json!({"lightOnSettings": {"isLedForceOn": true}})).unwrap();
-        let update = harbormaster_protect::decode_packet(&updates[0]).unwrap();
+        let update = gantry_protect::decode_packet(&updates[0]).unwrap();
         assert_eq!(update.data["isLightOn"], true);
         assert_eq!(site.bootstrap()["lights"][0]["isLightOn"], true);
         // The floodlight going quiet leaves a forced light on.

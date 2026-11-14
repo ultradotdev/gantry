@@ -1,7 +1,7 @@
-//! `harbormaster mock-console`: a pretend UniFi Protect console, for trying
+//! `gantry mock-console`: a pretend UniFi Protect console, for trying
 //! a fresh install end to end without a real one.
 //!
-//! It serves what Harbormaster asks a console for, over TLS with a
+//! It serves what Gantry asks a console for, over TLS with a
 //! certificate of its own: sign-in with one account, whose password the
 //! person starting the mock chooses as it starts, the
 //! inventory of a small invented site, the realtime update stream in the
@@ -10,7 +10,7 @@
 //! ffmpeg from test patterns, and a speaker that listens and discards.
 //!
 //! It is a development aid, not a model of Protect: it answers only the
-//! requests Harbormaster makes, in the shapes Harbormaster reads.
+//! requests Gantry makes, in the shapes Gantry reads.
 
 mod site;
 mod video;
@@ -24,7 +24,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use harbormaster_protect::Fingerprint;
+use gantry_protect::Fingerprint;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -525,12 +525,12 @@ pub fn run(state_dir: &Path, listen: SocketAddr, from_stdin: bool) -> Result<()>
         let host = if address.ip().is_unspecified() { "this Mac's address".to_owned() } else { address.ip().to_string() };
         println!(
             "\nA mock UniFi Protect console is listening on {address}.\n\
-             It is not a real console: it serves an invented site for testing Harbormaster.\n\n\
+             It is not a real console: it serves an invented site for testing Gantry.\n\n\
              \x20   address:     {host}:{port}\n\
              \x20   fingerprint: {fingerprint}\n\
              \x20   username:    {USERNAME}\n\
              \x20   password:    the one you just chose\n\n\
-             In another terminal, run `harbormaster setup` and give it those answers.\n\
+             In another terminal, run `gantry setup` and give it those answers.\n\
              Press Ctrl-C to stop.\n",
             port = address.port(),
             fingerprint = identity.fingerprint(),
@@ -542,7 +542,7 @@ pub fn run(state_dir: &Path, listen: SocketAddr, from_stdin: bool) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use harbormaster_protect::{Client, Error, FeedOptions, Segment};
+    use gantry_protect::{Client, Error, FeedOptions, Segment};
 
     /// Starts a mock that accepts a password made up on the spot, and
     /// returns where it is, its fingerprint and that password.
@@ -560,7 +560,7 @@ mod tests {
     #[tokio::test]
     async fn the_client_signs_in_reads_the_site_and_hears_what_happens() {
         let (port, fingerprint, password) = start(Duration::from_millis(50)).await;
-        assert_eq!(harbormaster_protect::fetch_fingerprint("127.0.0.1", port).await.unwrap(), fingerprint);
+        assert_eq!(gantry_protect::fetch_fingerprint("127.0.0.1", port).await.unwrap(), fingerprint);
 
         let mut client = Client::new("127.0.0.1", port, fingerprint);
         assert!(matches!(client.bootstrap().await, Err(Error::NotSignedIn)));
