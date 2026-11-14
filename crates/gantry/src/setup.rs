@@ -330,19 +330,63 @@ fn owner_instructions(command: &str, in_the_way: Option<u32>, over_ssh: bool) ->
     };
     let mut text = format!(
         "{}\n\
-         It takes administrator rights, so Gantry leaves it to you. This window waits.\n\n  \
+         This window waits while you do.\n\n  \
          1. {window}\n  \
          2. Copy the command between the two lines below and paste it there.\n  \
          3. Press Return, then type your Mac password when asked. Nothing shows\n     \
          as you type it.\n  \
          4. Come back to this window.\n\n{}\n",
-        bold("One command is left: it starts the service."),
+        bold("To run the command yourself:"),
         say::copy_block(command)
     );
     if let Some(pid) = in_the_way {
         text.push_str(&format!("\n{}", service::make_way(pid)));
     }
     text
+}
+
+/// What is said before offering to run the administrator commands: what
+/// they are, and where the password goes.
+fn administrator_offer(steps: &[service::Step]) -> String {
+    let commands: Vec<String> = steps.iter().map(|step| format!("    sudo {}", step.shell())).collect();
+    format!(
+        "{}\n\
+         It takes administrator rights, so macOS will ask for your Mac password. The\n\
+         password goes to macOS, never to Gantry. This is what will be run:\n\n{}\n",
+        bold("One thing is left: starting the service."),
+        commands.join("\n")
+    )
+}
+
+/// Whether the service starts answering within its patience.
+fn service_answers(state_dir: &Path) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < SERVICE_PATIENCE {
+        if client::state(state_dir).is_ok() {
+            println!("{}", done("The service is running. It starts again whenever this Mac does."));
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+/// Starts the service with the owner's leave: runs the administrator
+/// commands here if they agree, and otherwise, or if that fails, shows
+/// them to copy and waits. Says whether the service came up.
+fn start_service(state_dir: &Path, command: &str, steps: &[service::Step], in_the_way: Option<u32>, ask: &mut dyn Prompter) -> Result<bool> {
+    println!("\n{}", administrator_offer(steps));
+    if ask.confirm("Run it now?", true)? {
+        println!("\nType your Mac password if asked. Nothing shows as you type it.");
+        match service::run_as_administrator(state_dir, steps, in_the_way) {
+            Ok(()) if service_answers(state_dir) => return Ok(true),
+            Ok(()) => println!("\nThe commands ran, but the service is not answering yet."),
+            Err(why) => println!("\nThat did not work: {why:#}."),
+        }
+        // Whatever stood in the way has been stopped or was never the trouble.
+        return owner_started_it(state_dir, command, None, ask);
+    }
+    owner_started_it(state_dir, command, in_the_way, ask)
 }
 
 /// Shows the owner the administrator command that is theirs to run and
@@ -356,13 +400,8 @@ fn owner_started_it(state_dir: &Path, command: &str, in_the_way: Option<u32>, as
             println!("When you have run it, give the service the Protect password with:\n\n    gantry unlock\n");
             return Ok(false);
         }
-        let started = std::time::Instant::now();
-        while started.elapsed() < SERVICE_PATIENCE {
-            if client::state(state_dir).is_ok() {
-                println!("{}", done("The service is running. It starts again whenever this Mac does."));
-                return Ok(true);
-            }
-            std::thread::sleep(Duration::from_millis(500));
+        if service_answers(state_dir) {
+            return Ok(true);
         }
         println!(
             "\nThe service is not answering yet. Look at the other window: if the command\n\
@@ -491,7 +530,7 @@ pub fn run(state_dir: &Path, user_agent: bool) -> Result<()> {
         } else {
             let running = match &installed {
                 service::Installed::Running => true,
-                service::Installed::AwaitsOwner { command, in_the_way } => owner_started_it(state_dir, command, *in_the_way, ask)?,
+                service::Installed::AwaitsOwner { command, steps, in_the_way } => start_service(state_dir, command, steps, *in_the_way, ask)?,
             };
             if running {
                 hand_over(state_dir, password, ask)?;
@@ -593,6 +632,9 @@ mod tests {
             assert!(told.contains(wanted), "{wanted}: {told}");
         }
         assert!(!told.contains("kill"));
+        let offer = administrator_offer(&[service::Step::new(["/bin/true", "a b"]), service::Step::new(["/bin/false"])]);
+        assert!(offer.contains("    sudo /bin/true 'a b'\n    sudo /bin/false\n"), "{offer}");
+        assert!(offer.contains("never to Gantry"), "{offer}");
         let remote = owner_instructions("sudo /bin/true", Some(41), true);
         assert!(remote.contains("connect to this Mac") && !remote.contains("Command-N"), "{remote}");
         assert!(remote.contains("kill 41"), "{remote}");

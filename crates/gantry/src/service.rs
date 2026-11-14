@@ -117,7 +117,27 @@ impl Step {
         }
         bail!("`{}` failed: {last}", self.shell())
     }
+
+    /// Runs the step through `sudo` on this terminal. `sudo` asks for the
+    /// password itself, on the terminal; this program never sees it.
+    fn run_as_administrator(&self) -> Result<()> {
+        let attempts = if self.retry { 10 } else { 1 };
+        for attempt in 0..attempts {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            let status = std::process::Command::new(SUDO).arg("--").args(&self.argv).status().with_context(|| format!("running {SUDO}"))?;
+            if status.success() {
+                return Ok(());
+            }
+        }
+        bail!("`sudo {}` did not succeed", self.shell())
+    }
 }
+
+/// By its full path, so that nothing earlier on the command path is run
+/// with the administrator's password instead.
+const SUDO: &str = "/usr/bin/sudo";
 
 /// Quotes an argument for a POSIX shell, if it needs it.
 fn quote(argument: &str) -> String {
@@ -420,7 +440,7 @@ fn report_started(spec: &Spec, old_pid: Option<u32>) -> Result<()> {
 }
 
 /// How far installing the service got.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Installed {
     /// The service is in place and the daemon answers.
     Running,
@@ -429,6 +449,8 @@ pub enum Installed {
     AwaitsOwner {
         /// The one line that does it.
         command: String,
+        /// The same, as the commands it is made of.
+        steps: Vec<Step>,
         /// A daemon running by hand, which the service cannot start beside.
         in_the_way: Option<u32>,
     },
@@ -442,6 +464,16 @@ pub fn make_way(pid: u32) -> String {
     )
 }
 
+/// Runs what [`Installed::AwaitsOwner`] left, through `sudo` on this
+/// terminal, once the owner has agreed to that.
+pub fn run_as_administrator(state_dir: &Path, steps: &[Step], in_the_way: Option<u32>) -> Result<()> {
+    if let Some(pid) = in_the_way {
+        println!("Stopping the daemon running now (pid {pid}) so that the service takes over...");
+        stop_daemon(state_dir, pid);
+    }
+    steps.iter().try_for_each(Step::run_as_administrator)
+}
+
 /// Steps that take administrator rights, as one line to paste: one line
 /// asks for the password once and cannot lose its second half to the
 /// password prompt.
@@ -452,7 +484,7 @@ fn as_administrator(steps: &[Step]) -> String {
 /// `gantry service install`: installs the service and says what is
 /// left to do by hand.
 pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
-    if let Installed::AwaitsOwner { command, in_the_way } = install_step(state_dir, options)? {
+    if let Installed::AwaitsOwner { command, in_the_way, .. } = install_step(state_dir, options)? {
         let spec = spec(state_dir, options)?;
         println!(
             "One command is left. It puts the service where the system looks, which takes\n\
@@ -522,8 +554,10 @@ pub fn install_step(state_dir: &Path, options: &Options) -> Result<Installed> {
     if manager.needs_root(&spec) {
         let staged = spec.state_dir.join("service").join(unit_path.file_name().context("service file has no name")?);
         write_atomically(&staged, &unit)?;
+        let steps = manager.load_steps(&spec, &staged, loaded);
         return Ok(Installed::AwaitsOwner {
-            command: as_administrator(&manager.load_steps(&spec, &staged, loaded)),
+            command: as_administrator(&steps),
+            steps,
             in_the_way: old_pid.filter(|_| !loaded),
         });
     }
