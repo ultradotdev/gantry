@@ -1,5 +1,5 @@
 //! The lines that tell the person at the terminal which UniFi Protect
-//! account Harbormaster is using, and the command that stores a password
+//! account Gantry is using, and the command that stores a password
 //! for it. Naming the account is the point of them: it is how someone
 //! sees that the right console and the right account are configured.
 //!

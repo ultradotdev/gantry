@@ -1,6 +1,6 @@
 //! A small HomeKit Accessory Protocol server for IP accessories and bridges.
 //!
-//! This crate owns the security-critical core of Harbormaster: pairing,
+//! This crate owns the security-critical core of Gantry: pairing,
 //! session encryption, the accessory database and the HTTP endpoints that
 //! Apple controllers talk to.
 

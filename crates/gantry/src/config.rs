@@ -1,7 +1,7 @@
 //! The optional `config.toml` in the state directory.
 //!
 //! It never holds secrets. The password comes from the macOS Keychain, from
-//! `harbormaster unlock`, or from the optional `protect-password` file.
+//! `gantry unlock`, or from the optional `protect-password` file.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ pub const FILE_NAME: &str = "config.toml";
 pub const EXAMPLE: &str = "\
 [protect]
 host = \"192.0.2.10\"        # address of the console running UniFi Protect
-username = \"harbormaster\"  # a local-only account created for Harbormaster
+username = \"gantry\"  # a local-only account created for Gantry
 # fingerprint = \"...\"      # added after the first protect-check
 # devices = [\"Front Door\"] # publish only these (by name); omit for all
 # name_prefix = \"\"         # put before every name sent to HomeKit
@@ -91,7 +91,7 @@ mod tests {
     fn example_parses_with_defaults() {
         let config = parse(EXAMPLE).unwrap();
         let protect = config.protect.unwrap();
-        assert_eq!((protect.host.as_str(), protect.port, protect.username.as_str()), ("192.0.2.10", 443, "harbormaster"));
+        assert_eq!((protect.host.as_str(), protect.port, protect.username.as_str()), ("192.0.2.10", 443, "gantry"));
         assert!(protect.fingerprint.is_none() && protect.devices.is_none());
         let filtered = parse("[protect]\nhost = \"h\"\nusername = \"u\"\ndevices = [\"Front Door\"]\n").unwrap();
         assert_eq!(filtered.protect.unwrap().devices.unwrap(), ["Front Door"]);

@@ -1,4 +1,4 @@
-//! Running Harbormaster under launchd, the macOS service manager.
+//! Running Gantry under launchd, the macOS service manager.
 //!
 //! Two kinds of launchd job could run the bridge:
 //!
@@ -17,7 +17,7 @@
 //! The bridge has to come back after a reboot of an unattended machine, so
 //! the system LaunchDaemon running as the owner is the default. The price
 //! is that such a job runs outside any login session and cannot read the
-//! login Keychain, which is why the daemon waits for `harbormaster unlock`.
+//! login Keychain, which is why the daemon waits for `gantry unlock`.
 //! The LaunchAgent is still offered (`--user-agent`) for a Mac that always
 //! has its owner logged in, and for trying the service out without `sudo`.
 //!
@@ -187,10 +187,10 @@ mod tests {
 
     fn spec(scope: Scope) -> Spec {
         Spec {
-            label: "dev.ultra.harbormaster".into(),
+            label: "dev.ultra.gantry".into(),
             scope,
-            program: "/Users/pat/Library/Application Support/harbormaster/bin/harbormaster".into(),
-            state_dir: "/Users/pat/Library/Application Support/harbormaster".into(),
+            program: "/Users/pat/Library/Application Support/gantry/bin/gantry".into(),
+            state_dir: "/Users/pat/Library/Application Support/gantry".into(),
             user: "pat".into(),
             uid: 501,
             home: "/Users/pat".into(),
@@ -211,12 +211,12 @@ mod tests {
     #[test]
     fn the_system_job_runs_the_daemon_as_the_owner_from_the_state_directory() {
         let text = plist(&spec(Scope::System));
-        let dir = "/Users/pat/Library/Application Support/harbormaster";
+        let dir = "/Users/pat/Library/Application Support/gantry";
         assert_eq!(
             strings(&text),
             [
-                "dev.ultra.harbormaster",
-                &format!("{dir}/bin/harbormaster"),
+                "dev.ultra.gantry",
+                &format!("{dir}/bin/gantry"),
                 "daemon",
                 "--detached",
                 "--state-dir",
@@ -231,7 +231,7 @@ mod tests {
         );
         assert!(text.contains("<key>UserName</key>\n    <string>pat</string>"));
         assert!(text.contains("<key>KeepAlive</key>\n    <true/>") && text.contains("<key>RunAtLoad</key>\n    <true/>"));
-        assert_eq!(Launchd.unit_path(&spec(Scope::System)), Path::new("/Library/LaunchDaemons/dev.ultra.harbormaster.plist"));
+        assert_eq!(Launchd.unit_path(&spec(Scope::System)), Path::new("/Library/LaunchDaemons/dev.ultra.gantry.plist"));
         assert!(Launchd.needs_root(&spec(Scope::System)));
     }
 
@@ -240,15 +240,15 @@ mod tests {
         let agent = spec(Scope::User);
         let text = plist(&agent);
         assert!(!text.contains("UserName"));
-        assert_eq!(Launchd.unit_path(&agent), Path::new("/Users/pat/Library/LaunchAgents/dev.ultra.harbormaster.plist"));
+        assert_eq!(Launchd.unit_path(&agent), Path::new("/Users/pat/Library/LaunchAgents/dev.ultra.gantry.plist"));
         assert!(!Launchd.needs_root(&agent));
         let steps: Vec<String> =
             Launchd.load_steps(&agent, Path::new("/unused"), true).iter().map(Step::shell).collect();
         assert_eq!(
             steps,
             [
-                "/bin/launchctl bootout gui/501/dev.ultra.harbormaster",
-                "/bin/launchctl bootstrap gui/501 /Users/pat/Library/LaunchAgents/dev.ultra.harbormaster.plist",
+                "/bin/launchctl bootout gui/501/dev.ultra.gantry",
+                "/bin/launchctl bootstrap gui/501 /Users/pat/Library/LaunchAgents/dev.ultra.gantry.plist",
             ]
         );
     }
@@ -256,28 +256,28 @@ mod tests {
     #[test]
     fn the_system_job_is_put_in_place_as_root_and_only_booted_out_if_loaded() {
         let system = spec(Scope::System);
-        let staged = Path::new("/Users/pat/Library/Application Support/harbormaster/service/dev.ultra.harbormaster.plist");
+        let staged = Path::new("/Users/pat/Library/Application Support/gantry/service/dev.ultra.gantry.plist");
         let steps: Vec<String> = Launchd.load_steps(&system, staged, false).iter().map(Step::shell).collect();
         assert_eq!(
             steps,
             [
-                "/usr/bin/install -o root -g wheel -m 644 '/Users/pat/Library/Application Support/harbormaster/service/dev.ultra.harbormaster.plist' /Library/LaunchDaemons/dev.ultra.harbormaster.plist",
-                "/bin/launchctl bootstrap system /Library/LaunchDaemons/dev.ultra.harbormaster.plist",
+                "/usr/bin/install -o root -g wheel -m 644 '/Users/pat/Library/Application Support/gantry/service/dev.ultra.gantry.plist' /Library/LaunchDaemons/dev.ultra.gantry.plist",
+                "/bin/launchctl bootstrap system /Library/LaunchDaemons/dev.ultra.gantry.plist",
             ]
         );
         let unload: Vec<String> = Launchd.unload_steps(&system, true).iter().map(Step::shell).collect();
         assert_eq!(
             unload,
             [
-                "/bin/launchctl bootout system/dev.ultra.harbormaster",
-                "/bin/rm -f /Library/LaunchDaemons/dev.ultra.harbormaster.plist",
+                "/bin/launchctl bootout system/dev.ultra.gantry",
+                "/bin/rm -f /Library/LaunchDaemons/dev.ultra.gantry.plist",
             ]
         );
         // Stopping leaves the file where it is, for starting again.
         let stop: Vec<String> = Launchd.stop_steps(&system).iter().map(Step::shell).collect();
-        assert_eq!(stop, ["/bin/launchctl bootout system/dev.ultra.harbormaster"]);
+        assert_eq!(stop, ["/bin/launchctl bootout system/dev.ultra.gantry"]);
         let start: Vec<String> = Launchd.start_steps(&system).iter().map(Step::shell).collect();
-        assert_eq!(start, ["/bin/launchctl bootstrap system /Library/LaunchDaemons/dev.ultra.harbormaster.plist"]);
+        assert_eq!(start, ["/bin/launchctl bootstrap system /Library/LaunchDaemons/dev.ultra.gantry.plist"]);
     }
 
     #[test]
@@ -310,7 +310,7 @@ mod tests {
         // Every string in it is one of the things it is meant to hold.
         let state_dir = dir.to_string_lossy().into_owned();
         for value in strings(&text) {
-            let known = ["dev.ultra.harbormaster", "daemon", "--detached", "--state-dir", "pat", "Interactive", "/Users/pat"];
+            let known = ["dev.ultra.gantry", "daemon", "--detached", "--state-dir", "pat", "Interactive", "/Users/pat"];
             let expected = known.contains(&value.as_str())
                 || value == state_dir
                 || value == format!("{state_dir}/service.out")
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn launchctl_output_is_boiled_down() {
-        let printed = "system/dev.ultra.harbormaster = {\n\tactive count = 1\n\tstate = running\n\n\tprogram = /x\n\tpid = 612\n\tlast exit code = (never exited)\n}\n";
+        let printed = "system/dev.ultra.gantry = {\n\tactive count = 1\n\tstate = running\n\n\tprogram = /x\n\tpid = 612\n\tlast exit code = (never exited)\n}\n";
         assert_eq!(summary(printed), "running, pid 612, last exit (never exited)");
         assert_eq!(summary("x = {\n\tstate = not running\n\tlast exit code = 1\n}"), "not running, last exit 1");
     }

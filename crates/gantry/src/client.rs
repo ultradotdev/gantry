@@ -19,7 +19,7 @@ const UNLOCK_PATIENCE: Duration = Duration::from_secs(90);
 fn connect(state_dir: &Path, patience: Duration) -> Result<UnixStream> {
     let path = state_dir.join(control::SOCKET_NAME);
     let stream = UnixStream::connect(&path).with_context(|| {
-        format!("no Harbormaster daemon is running with the state directory {} (nothing answers on {})", state_dir.display(), path.display())
+        format!("no Gantry daemon is running with the state directory {} (nothing answers on {})", state_dir.display(), path.display())
     })?;
     stream.set_read_timeout(Some(patience))?;
     Ok(stream)
@@ -71,7 +71,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hm-client-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(state(&dir).unwrap_err().to_string().contains("no Harbormaster daemon is running"));
+        assert!(state(&dir).unwrap_err().to_string().contains("no Gantry daemon is running"));
 
         let listener = UnixListener::bind(dir.join(control::SOCKET_NAME)).unwrap();
         let daemon = std::thread::spawn(move || {

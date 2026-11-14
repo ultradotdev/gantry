@@ -1,5 +1,5 @@
 //! The macOS Keychain, where the Protect password is looked for and where
-//! setup can store it. Harbormaster never writes a password to a file. The
+//! setup can store it. Gantry never writes a password to a file. The
 //! optional `protect-password` file, for machines that must start with
 //! nobody there, is the owner's to create; see `secrets.rs`.
 
@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use crate::password::Secret;
 
 /// Keychain service name under which the Protect account password is stored.
-pub const PROTECT_SERVICE: &str = "harbormaster-protect";
+pub const PROTECT_SERVICE: &str = "gantry-protect";
 
 /// The command a person runs to store a password. It prompts for the
 /// password, so it never appears in shell history.
@@ -127,7 +127,7 @@ pub fn store(service: &str, account: &str, password: &Secret) -> Result<(), Fail
 }
 
 /// Unlocks the login Keychain. `security` asks for the Mac login password
-/// on the terminal this runs in; Harbormaster never sees it.
+/// on the terminal this runs in; Gantry never sees it.
 pub fn unlock_interactively() -> Result<()> {
     let status = Command::new("/usr/bin/security").arg("unlock-keychain").status().context("running /usr/bin/security")?;
     if !status.success() {

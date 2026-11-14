@@ -1,4 +1,4 @@
-//! The parts of UniFi Protect's bootstrap document Harbormaster uses.
+//! The parts of UniFi Protect's bootstrap document Gantry uses.
 //!
 //! This is a private API that changes between Protect releases, so every
 //! field is optional or defaulted and unknown fields are ignored.

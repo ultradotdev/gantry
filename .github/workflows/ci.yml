@@ -52,10 +52,10 @@ jobs:
           cargo build --release --locked --target aarch64-apple-darwin
           cargo build --release --locked --target x86_64-apple-darwin
       - name: The binary runs and reports its version
-        run: target/aarch64-apple-darwin/release/harbormaster --version
+        run: target/aarch64-apple-darwin/release/gantry --version
       - name: The released binary has no mock console in it
         run: |
-          if target/aarch64-apple-darwin/release/harbormaster mock-console --stdin </dev/null 2>refusal; then
+          if target/aarch64-apple-darwin/release/gantry mock-console --stdin </dev/null 2>refusal; then
             echo "the release build started a mock console" >&2; exit 1
           fi
           grep -q "no mock console" refusal
@@ -104,7 +104,7 @@ jobs:
         run: |
           # Every address in it must be this repository on GitHub.
           # shellcheck disable=SC2016
-          if grep -Eo 'https?://[^" ]+' install.sh | grep -v '^https://github.com/\$repo' | grep -v '^https://raw.githubusercontent.com/ultradotdev/harbormaster/'; then
+          if grep -Eo 'https?://[^" ]+' install.sh | grep -v '^https://github.com/\$repo' | grep -v '^https://raw.githubusercontent.com/ultradotdev/gantry/'; then
             echo "install.sh reaches somewhere unexpected" >&2
             exit 1
           fi

@@ -6,4 +6,4 @@
 # name. This has the compiler record neutral names instead.
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 toolchain="$(rustc --print sysroot)"
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$cargo_home=/cargo --remap-path-prefix=$toolchain=/rust --remap-path-prefix=$PWD=/harbormaster"
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$cargo_home=/cargo --remap-path-prefix=$toolchain=/rust --remap-path-prefix=$PWD=/gantry"

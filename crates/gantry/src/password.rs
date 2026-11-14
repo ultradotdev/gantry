@@ -1,7 +1,7 @@
 //! The UniFi Protect password while the daemon holds it.
 //!
 //! A detached daemon cannot read a locked Keychain, so the password is
-//! found once (or handed over by `harbormaster unlock`) and then kept here,
+//! found once (or handed over by `gantry unlock`) and then kept here,
 //! in memory only, for every sign-in the bridge makes. It is never logged,
 //! never written to disk and never part of a status snapshot, and the
 //! memory is wiped when the last copy is dropped.

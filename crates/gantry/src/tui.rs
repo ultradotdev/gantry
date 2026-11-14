@@ -887,7 +887,7 @@ fn draw(frame: &mut Frame, app: &mut App) {
                 Target::Password => (
                     "UniFi Protect password",
                     Span::raw("•".repeat(input.chars().count())),
-                    [" Kept in the daemon's memory only, until it", " stops. `harbormaster unlock` does the same."],
+                    [" Kept in the daemon's memory only, until it", " stops. `gantry unlock` does the same."],
                 ),
                 Target::Device(_) => (
                     "Name to publish",
@@ -1009,9 +1009,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         let lines = vec![
             Line::from(vec![Span::styled("✕ ", BAD), Span::styled("daemon not running", BAD)]),
             Line::styled("start it with:", DIM),
-            Line::styled("  harbormaster daemon", DIM),
+            Line::styled("  gantry daemon", DIM),
         ];
-        frame.render_widget(Paragraph::new(lines).block(pane("Harbormaster", false)), area);
+        frame.render_widget(Paragraph::new(lines).block(pane("Gantry", false)), area);
         return;
     };
     let row = |mark: Span<'static>, label: &str, rest: Vec<Span<'static>>| {
@@ -1616,7 +1616,7 @@ pub fn run(state_dir: &Path) -> Result<()> {
     // underneath would abort rather than say so.
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         anyhow::bail!(
-            "the dashboard needs a terminal. For a report that does not, use `harbormaster service status` or `harbormaster logs`"
+            "the dashboard needs a terminal. For a report that does not, use `gantry service status` or `gantry logs`"
         );
     }
     let mut terminal = ratatui::init();
@@ -1666,7 +1666,7 @@ mod tests {
         State {
             pid: 0,
             detect_everywhere: Vec::new(),
-            name: "Harbormaster 6C2C".into(),
+            name: "Gantry 6C2C".into(),
             version: "0.1.0".into(),
             listen: "[::]:51826".into(),
             uptime_secs: 3725,
@@ -1782,7 +1782,7 @@ mod tests {
             &screen,
             &[
                 // The quick view.
-                "Harbormaster 6C2C",
+                "Gantry 6C2C",
                 "paired · 1 connected",
                 "192.0.2.1 · 2s",
                 "1 of 5 offline",
@@ -2040,14 +2040,14 @@ mod tests {
         let accessory = |aid, name: &str, model: &str| Accessory {
             aid,
             name: name.into(),
-            manufacturer: "Harbormaster".into(),
+            manufacturer: "Gantry".into(),
             model: model.into(),
             serial_number: "demo-1".into(),
             readings: vec![Reading { label: "Temperature".into(), value: "21.5 °C".into() }],
         };
         let mut state = sample_state(true);
         state.devices.clear();
-        state.accessories = vec![accessory(1, "Harbormaster 6C2C", "Bridge"), accessory(2, "Demo Temperature", "Demo")];
+        state.accessories = vec![accessory(1, "Gantry 6C2C", "Bridge"), accessory(2, "Demo Temperature", "Demo")];
         let mut app = app_with(state);
         let screen = render(&mut app);
         assert_shows(&screen, &["Devices (1)", "Demo Temperature", "21.5 °C"]);
@@ -2444,10 +2444,10 @@ mod tests {
     #[test]
     fn long_affixes_squeeze_the_name_not_themselves() {
         let mut state = with_affix(editable(sample_state(true)));
-        state.name_prefix = "Harbormaster bridge ".into();
+        state.name_prefix = "Gantry bridge ".into();
         let mut app = app_with(state);
         let screen = render(&mut app);
-        assert!(screen.contains("● Harborma…Fro… (UP) rec now"), "{screen}");
+        assert!(screen.contains("● Gantry b…Fro… (UP) rec now"), "{screen}");
         assert!(screen.lines().all(|l| l.chars().count() == 80));
     }
 

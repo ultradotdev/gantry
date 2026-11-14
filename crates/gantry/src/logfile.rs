@@ -1,10 +1,10 @@
 //! The daemon's log on disk, for when nobody is attached to see it.
 //!
 //! A detached daemon has no terminal, and the dashboard only remembers the
-//! last few hundred lines, so every line also goes to `harbormaster.log`
+//! last few hundred lines, so every line also goes to `gantry.log`
 //! in the state directory. The file is the owner's alone, is stamped in
 //! local time, and cannot grow without bound: at the size cap it is renamed
-//! to `harbormaster.log.1`, replacing the one before, and a new file begun.
+//! to `gantry.log.1`, replacing the one before, and a new file begun.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -19,9 +19,9 @@ use tracing_subscriber::layer::{Context as LayerContext, Layer};
 
 use crate::clock;
 
-pub const FILE_NAME: &str = "harbormaster.log";
+pub const FILE_NAME: &str = "gantry.log";
 /// The one older file that is kept.
-pub const ROTATED_NAME: &str = "harbormaster.log.1";
+pub const ROTATED_NAME: &str = "gantry.log.1";
 
 /// Size at which the log is rotated. With one older file kept, the log
 /// never takes more than about twice this.
@@ -108,7 +108,7 @@ fn tail(state_dir: &Path, count: usize) -> Vec<String> {
     lines.split_off(lines.len().saturating_sub(count))
 }
 
-/// `harbormaster logs`: prints the end of the log and, with `follow`,
+/// `gantry logs`: prints the end of the log and, with `follow`,
 /// every line written from then on until interrupted.
 pub fn show(state_dir: &Path, count: usize, follow: bool) -> Result<()> {
     use std::io::{Read, Seek, SeekFrom};

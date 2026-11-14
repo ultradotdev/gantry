@@ -1,10 +1,10 @@
-//! Where Harbormaster finds the UniFi Protect password.
+//! Where Gantry finds the UniFi Protect password.
 //!
 //! An unattended machine cannot use the login Keychain: it stays locked
 //! until someone logs in at the console, and is locked for SSH sessions.
 //! So a password file in the state directory is checked first, then the
 //! Keychain if it answers without asking for anything. A daemon that finds
-//! neither starts anyway and waits for `harbormaster unlock`.
+//! neither starts anyway and waits for `gantry unlock`.
 
 use std::path::{Path, PathBuf};
 

@@ -1,4 +1,4 @@
-//! `harbormaster service install | uninstall | status`: running the daemon
+//! `gantry service install | uninstall | status`: running the daemon
 //! detached, started by the system and restarted if it stops.
 //!
 //! What a service file looks like and how it is loaded belongs to the
@@ -15,7 +15,7 @@ use anyhow::{bail, Context, Result};
 use crate::{client, control, daemon};
 
 /// The service's name to the service manager.
-pub const LABEL: &str = "dev.ultra.harbormaster";
+pub const LABEL: &str = "dev.ultra.gantry";
 
 /// Whatever the daemon writes outside its log: a panic, a failed start.
 pub const OUTPUT_NAME: &str = "service.out";
@@ -156,8 +156,8 @@ fn manager() -> Result<Box<dyn Manager>> {
         Ok(Box::new(crate::launchd::Launchd))
     } else {
         bail!(
-            "installing Harbormaster as a service is only done for macOS so far. On another system, have its \
-             service manager run `harbormaster daemon --detached --state-dir DIR` as your user"
+            "installing Gantry as a service is only done for macOS so far. On another system, have its \
+             service manager run `gantry daemon --detached --state-dir DIR` as your user"
         )
     }
 }
@@ -210,7 +210,7 @@ fn spec(state_dir: &Path, options: &Options) -> Result<Spec> {
 
 /// Where the service's own copy of the binary lives.
 fn installed_binary(state_dir: &Path) -> PathBuf {
-    state_dir.join("bin").join("harbormaster")
+    state_dir.join("bin").join("gantry")
 }
 
 /// Puts a copy of `source` at `destination`. Returns whether anything
@@ -301,9 +301,9 @@ fn wait_for_daemon(state_dir: &Path, old_pid: Option<u32>) -> Option<control::St
 }
 
 /// Where a link to the installed binary goes, so that it can be run as
-/// plain `harbormaster`. The directory is on the command path of every
+/// plain `gantry`. The directory is on the command path of every
 /// login shell on macOS and most other systems.
-const LINK: &str = "/usr/local/bin/harbormaster";
+const LINK: &str = "/usr/local/bin/gantry";
 
 /// Whether `link` is a link to `program`.
 fn linked(program: &Path, link: &Path) -> bool {
@@ -327,7 +327,7 @@ fn link_binary(program: &Path, link: &Path) -> bool {
     std::os::unix::fs::symlink(program, link).is_ok()
 }
 
-/// Whether a `harbormaster` is already on the command path without the
+/// Whether a `gantry` is already on the command path without the
 /// link, as it is when a package manager or the install script put it
 /// there. A link at `link` itself does not count: it may be a stale one.
 fn on_path_elsewhere(path: Option<&std::ffi::OsStr>, link: &Path) -> bool {
@@ -337,16 +337,16 @@ fn on_path_elsewhere(path: Option<&std::ffi::OsStr>, link: &Path) -> bool {
         !(candidate == link && is_link)
             && std::fs::metadata(candidate).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     };
-    path.is_some_and(|path| std::env::split_paths(path).any(|directory| runnable(&directory.join("harbormaster"))))
+    path.is_some_and(|path| std::env::split_paths(path).any(|directory| runnable(&directory.join("gantry"))))
 }
 
-/// Whether typing plain `harbormaster` runs this program.
+/// Whether typing plain `gantry` runs this program.
 fn runs_by_name(spec: &Spec) -> bool {
     let link = Path::new(LINK);
     linked(&spec.program, link) || on_path_elsewhere(std::env::var_os("PATH").as_deref(), link)
 }
 
-/// Makes the installed binary runnable as plain `harbormaster`, or says
+/// Makes the installed binary runnable as plain `gantry`, or says
 /// how, since the directory usually belongs to the administrator.
 fn offer_link(spec: &Spec) {
     let link = Path::new(LINK);
@@ -354,12 +354,12 @@ fn offer_link(spec: &Spec) {
         return;
     }
     if link_binary(&spec.program, link) {
-        println!("Linked {LINK}, so it can be run as plain `harbormaster`.");
+        println!("Linked {LINK}, so it can be run as plain `gantry`.");
     } else if std::fs::symlink_metadata(link).is_ok_and(|present| !present.file_type().is_symlink()) {
         println!("{LINK} is some other program, so no link was made there.");
     } else {
         println!(
-            "To run it as plain `harbormaster`, link it onto the command path. That takes\n\
+            "To run it as plain `gantry`, link it onto the command path. That takes\n\
              administrator rights, so run these yourself:\n\n    sudo /bin/mkdir -p {}\n    sudo /bin/ln -sfn {} {LINK}\n",
             link.parent().unwrap_or(Path::new("/")).display(),
             quote(&spec.program.to_string_lossy()),
@@ -367,7 +367,7 @@ fn offer_link(spec: &Spec) {
     }
 }
 
-/// `harbormaster ARGS`, as the owner would type it for this installation.
+/// `gantry ARGS`, as the owner would type it for this installation.
 fn invocation(spec: &Spec, arguments: &str) -> String {
     let default = crate::default_state_dir().ok().and_then(|dir| std::fs::canonicalize(dir).ok());
     let state_dir = if default.as_deref() == Some(spec.state_dir.as_path()) {
@@ -375,7 +375,7 @@ fn invocation(spec: &Spec, arguments: &str) -> String {
     } else {
         format!(" --state-dir {}", quote(&spec.state_dir.to_string_lossy()))
     };
-    let program = if runs_by_name(spec) { "harbormaster".to_owned() } else { quote(&spec.program.to_string_lossy()) };
+    let program = if runs_by_name(spec) { "gantry".to_owned() } else { quote(&spec.program.to_string_lossy()) };
     format!("{program} {arguments}{state_dir}")
 }
 
@@ -408,7 +408,7 @@ fn report_started(spec: &Spec, old_pid: Option<u32>) -> Result<()> {
             spec.output().display()
         );
     };
-    println!("Harbormaster is {}.", describe(&state));
+    println!("Gantry is {}.", describe(&state));
     if state.console.as_ref().is_some_and(|console| console.waiting_for_password) {
         println!("\nGive it the Protect password with:\n\n    {}\n", invocation(spec, "unlock"));
     }
@@ -430,7 +430,7 @@ pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
     let other = Spec { scope: if spec.scope == Scope::System { Scope::User } else { Scope::System }, ..spec.clone() };
     if manager.unit_path(&other).exists() {
         bail!(
-            "Harbormaster is already installed the other way, at {}. Remove that first:\n\n    {}\n",
+            "Gantry is already installed the other way, at {}. Remove that first:\n\n    {}\n",
             manager.unit_path(&other).display(),
             invocation(&spec, if other.scope == Scope::User { "service uninstall --user-agent" } else { "service uninstall" })
         );
@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn the_command_path_link_replaces_a_stale_link_but_never_a_file() {
         let dir = temp_dir("link");
-        let (program, link) = (dir.join("bin/harbormaster"), dir.join("path/harbormaster"));
+        let (program, link) = (dir.join("bin/gantry"), dir.join("path/gantry"));
         assert!(!linked(&program, &link));
         assert!(link_binary(&program, &link), "the directory is made if need be");
         assert!(linked(&program, &link) && link_binary(&program, &link), "and once is enough");
@@ -660,9 +660,9 @@ mod tests {
         std::fs::create_dir_all(&brew).unwrap();
         let path = std::env::join_paths([dir.join("path"), brew.clone()]).unwrap();
         assert!(!on_path_elsewhere(Some(&path), &link), "the link itself does not count");
-        std::fs::write(brew.join("harbormaster"), "").unwrap();
+        std::fs::write(brew.join("gantry"), "").unwrap();
         assert!(!on_path_elsewhere(Some(&path), &link), "nor does a file that cannot be run");
-        std::fs::set_permissions(brew.join("harbormaster"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(brew.join("gantry"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         assert!(on_path_elsewhere(Some(&path), &link) && !on_path_elsewhere(None, &link));
         // Some other program of the same name is left alone.
         std::fs::remove_file(&link).unwrap();
@@ -684,7 +684,7 @@ mod tests {
     fn the_binary_is_replaced_by_rename_and_never_written_in_place() {
         use std::os::unix::fs::MetadataExt;
         let dir = temp_dir("binary");
-        let source = dir.join("harbormaster.download");
+        let source = dir.join("gantry.download");
         std::fs::write(&source, b"version one").unwrap();
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
         let destination = installed_binary(&dir);

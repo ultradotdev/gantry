@@ -1,6 +1,6 @@
-//! Harbormaster: a HomeKit bridge with a terminal interface.
+//! Gantry: a HomeKit bridge with a terminal interface.
 //!
-//! `harbormaster daemon` runs the bridge. `harbormaster` (or `harbormaster
+//! `gantry daemon` runs the bridge. `gantry` (or `gantry
 //! tui`) attaches a terminal interface to a running daemon.
 
 mod account_lines;
@@ -42,7 +42,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 const HELP: &str = "\
-Usage: harbormaster [COMMAND] [OPTIONS]
+Usage: gantry [COMMAND] [OPTIONS]
 
 Commands:
   setup    first run: find the UniFi Protect console, sign in, write the
@@ -125,7 +125,7 @@ struct Args {
 
 fn default_state_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").context("HOME is not set; pass --state-dir")?;
-    Ok(PathBuf::from(home).join("Library/Application Support/harbormaster"))
+    Ok(PathBuf::from(home).join("Library/Application Support/gantry"))
 }
 
 fn parse_args(input: impl IntoIterator<Item = String>) -> Result<Args> {
@@ -187,11 +187,11 @@ fn parse_args(input: impl IntoIterator<Item = String>) -> Result<Args> {
             "--stdin" => args.stdin = true,
             "--detached" => args.detached = true,
             "--version" | "-V" => {
-                println!("harbormaster {}", env!("CARGO_PKG_VERSION"));
+                println!("gantry {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             "--help" | "-h" => {
-                println!("harbormaster {}\n\n{HELP}", env!("CARGO_PKG_VERSION"));
+                println!("gantry {}\n\n{HELP}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             other => bail!("unknown argument {other}; try --help"),
@@ -219,7 +219,7 @@ fn require_setup(args: &Args) -> Result<()> {
     );
     if looks && !args.state_dir.exists() {
         bail!(
-            "Harbormaster is not set up yet (there is no {}). Start with:\n\n    harbormaster setup\n",
+            "Gantry is not set up yet (there is no {}). Start with:\n\n    gantry setup\n",
             args.state_dir.display()
         );
     }
@@ -336,13 +336,13 @@ mod tests {
         // Looking at an installation that is not there is one plain message.
         for looking in [&["service", "status"][..], &["logs"], &["unlock"], &["tui"], &[]] {
             let mut words = looking.to_vec();
-            words.extend(["--state-dir", "/nonexistent/harbormaster"]);
+            words.extend(["--state-dir", "/nonexistent/gantry"]);
             let said = require_setup(&parse(&words).unwrap()).unwrap_err().to_string();
-            assert!(said.contains("not set up yet") && said.contains("harbormaster setup"), "{said}");
+            assert!(said.contains("not set up yet") && said.contains("gantry setup"), "{said}");
         }
         for making in [&["setup"][..], &["daemon"], &["service", "install"]] {
             let mut words = making.to_vec();
-            words.extend(["--state-dir", "/nonexistent/harbormaster"]);
+            words.extend(["--state-dir", "/nonexistent/gantry"]);
             assert!(require_setup(&parse(&words).unwrap()).is_ok());
         }
         assert!(parse(&["--listen"]).is_err());

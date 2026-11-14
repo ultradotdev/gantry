@@ -1,4 +1,4 @@
-//! `harbormaster unlock`: gets the UniFi Protect password and hands it to
+//! `gantry unlock`: gets the UniFi Protect password and hands it to
 //! the running daemon, which keeps it in memory only.
 //!
 //! The daemon runs detached and cannot ask anyone for anything, so this is
@@ -21,7 +21,7 @@ pub trait Platform {
     /// The password as the system has it stored, without asking for it.
     fn stored(&mut self, username: &str) -> Result<Secret, Failure>;
     /// Unlocks the system's store. The system does the asking, on this
-    /// terminal; Harbormaster never sees what is typed.
+    /// terminal; Gantry never sees what is typed.
     fn unlock_store(&mut self) -> Result<()>;
     /// Locks the store again after `unlock_store`.
     fn relock_store(&mut self);
@@ -55,7 +55,7 @@ impl Platform for Mac {
     }
 }
 
-/// A system with no password store Harbormaster knows: it just asks.
+/// A system with no password store Gantry knows: it just asks.
 struct Plain;
 
 impl Platform for Plain {

@@ -1,5 +1,7 @@
 [package]
-name = "harbormaster-hap"
+name = "gantry-hap"
+description = "HomeKit Accessory Protocol server: pairing, sessions and accessories, used by Gantry"
+repository.workspace = true
 edition.workspace = true
 version.workspace = true
 license.workspace = true

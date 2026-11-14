@@ -226,7 +226,7 @@ mod tests {
     use super::*;
 
     /// Exactly what a daemon from before the dashboard sends.
-    const OLD_STATE: &str = r#"{"type":"state","name":"Harbormaster 6C2C","version":"0.1.0","listen":"[::]:51826",
+    const OLD_STATE: &str = r#"{"type":"state","name":"Gantry 6C2C","version":"0.1.0","listen":"[::]:51826",
         "uptime_secs":5,"paired":true,"setup_code":null,"setup_uri":null,
         "controllers":[{"id":"AAAA","admin":true}],
         "connections":[{"peer":"10.0.0.5","controller":"AAAA","connected_secs":3}],
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn old_daemon_snapshot_still_reads() {
         let Message::State(state) = serde_json::from_str(OLD_STATE).unwrap() else { panic!("not a state") };
-        assert_eq!((state.name.as_str(), state.paired, state.accessories.len()), ("Harbormaster 6C2C", true, 1));
+        assert_eq!((state.name.as_str(), state.paired, state.accessories.len()), ("Gantry 6C2C", true, 1));
         assert_eq!(state.connections[0].peer, "10.0.0.5");
         assert!(state.devices.is_empty() && state.console.is_none());
         assert_eq!((state.time, state.config_number), (0, 0));
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn new_snapshot_round_trips() {
         let state = State {
-            name: "Harbormaster".into(),
+            name: "Gantry".into(),
             time: 1_800_000_000,
             config_number: 7,
             console: Some(Console {

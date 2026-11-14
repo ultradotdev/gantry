@@ -11,19 +11,19 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use harbormaster_hap::model::kind;
-use harbormaster_hap::{
+use gantry_hap::model::kind;
+use gantry_hap::{
     Accessory, Bridge, Characteristic, Database, Format, Info, SnapshotReason, SnapshotSource, Store,
 };
 use bytes::Bytes;
-use harbormaster_protect::{Client, FeedOptions, Fingerprint, Segment, Update};
+use gantry_protect::{Client, FeedOptions, Fingerprint, Segment, Update};
 use tokio::sync::mpsc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::recording::{self, Recorder, RecordingIds};
 use crate::video::{self, StreamIds, VideoSource};
-use harbormaster_hap::recording::{TRIGGER_DOORBELL, TRIGGER_MOTION};
+use gantry_hap::recording::{TRIGGER_DOORBELL, TRIGGER_MOTION};
 use crate::config;
 use crate::password::{Secret, Vault};
 
@@ -273,7 +273,7 @@ pub fn definitions(bootstrap: &Value) -> Vec<DeviceDef> {
 }
 
 /// The sample rate a camera's speaker takes sound at, if it has a speaker
-/// and takes the one format Harbormaster produces.
+/// and takes the one format Gantry produces.
 fn speaker_rate(camera: &Value) -> Option<u32> {
     let settings = &camera["talkbackSettings"];
     let usable = camera["featureFlags"]["hasSpeaker"] == true && settings["typeFmt"] == "aac";
@@ -716,7 +716,7 @@ fn install_light_control(db: &Arc<Database>, live: &Arc<Live>, aid: u64, handles
             aid,
             iid,
             Arc::new(move |value, _| {
-                let changes = changes(value).ok_or(harbormaster_hap::model::status::INVALID_VALUE)?;
+                let changes = changes(value).ok_or(gantry_hap::model::status::INVALID_VALUE)?;
                 let previous = db_for_task.read(aid, iid).ok();
                 let (db, live, id, name) = (db_for_task.clone(), live.clone(), id.clone(), name.clone());
                 tokio::spawn(async move {
@@ -1094,7 +1094,7 @@ impl ProtectBridge {
         let pin = config
             .fingerprint
             .as_deref()
-            .context("[protect] has no fingerprint yet; run `harbormaster protect-check` first")?
+            .context("[protect] has no fingerprint yet; run `gantry protect-check` first")?
             .parse()
             .context("fingerprint in config.toml")?;
         let live = Arc::new(Live::default());
@@ -1131,12 +1131,12 @@ impl ProtectBridge {
     /// Without a password it waits for one, and the devices published from
     /// the last run stay in HomeKit, shown as not responding.
     pub async fn run(mut self, bridge: Arc<Bridge>) {
-        use harbormaster_protect::Error;
+        use gantry_protect::Error;
         let mut delay = Duration::from_secs(1);
         loop {
             if self.vault.view().waiting {
                 tracing::info!(
-                    "waiting for the Protect password: devices show as offline in HomeKit until `harbormaster unlock` is run"
+                    "waiting for the Protect password: devices show as offline in HomeKit until `gantry unlock` is run"
                 );
             }
             let password = self.vault.password().await;
@@ -1643,7 +1643,7 @@ mod tests {
         assert_eq!(devices.add(&cached, &store, &db).unwrap(), 1);
         let aid = devices.handles[&("camera", "cam1".to_owned())].aid;
         let before = db.layout();
-        assert_eq!(db.read(aid, iid::STREAMS[0] + 3), Err(harbormaster_hap::model::status::NOT_FOUND));
+        assert_eq!(db.read(aid, iid::STREAMS[0] + 3), Err(gantry_hap::model::status::NOT_FOUND));
 
         // The console is reached and reports the camera's streams, and
         // with them its package camera.
@@ -1750,7 +1750,7 @@ mod tests {
         assert_eq!(seen(&f), (json!(0), json!(0)));
         assert_eq!(f.db.read(aid, person + 2), Ok(json!("Front Door Person")), "named for lists in HomeKit");
         assert_eq!(f.db.read(aid, person + 3), Ok(json!("Front Door Person")), "and under the name Home reads");
-        assert_eq!(f.db.read(aid, Detection::Animal.iid() + 1), Err(harbormaster_hap::model::status::NOT_FOUND));
+        assert_eq!(f.db.read(aid, Detection::Animal.iid() + 1), Err(gantry_hap::model::status::NOT_FOUND));
 
         let event = |f: &Fixture, action: &str, id: &str, data: Value| {
             let update = Update { action: action.into(), model_key: "event".into(), id: id.into(), new_update_id: None, data };
@@ -1800,7 +1800,7 @@ mod tests {
         assert_eq!(f.db.read(light, iid::LIGHTBULB + 2), Ok(json!(50)));
         // Cameras have no light to control.
         let camera = f.aid("camera", "cam1");
-        assert_eq!(f.db.read(camera, iid::LIGHTBULB + 1), Err(harbormaster_hap::model::status::NOT_FOUND));
+        assert_eq!(f.db.read(camera, iid::LIGHTBULB + 1), Err(gantry_hap::model::status::NOT_FOUND));
 
         // Six steps map onto percentages and back without drifting.
         assert_eq!((1..=6).map(level_to_percent).collect::<Vec<_>>(), [17, 33, 50, 67, 83, 100]);
@@ -1826,7 +1826,7 @@ mod tests {
         let mut devices = Devices { live: Some(Arc::new(Live::default())), ..Devices::default() };
         devices.add(&definitions(&bootstrap()), &store, &db).unwrap();
         let light = devices.handles[&("light", "lit1".to_owned())].aid;
-        let context = harbormaster_hap::model::WriteContext {
+        let context = gantry_hap::model::WriteContext {
             connection: 1,
             local_ip: "127.0.0.1".parse().unwrap(),
             peer_ip: "127.0.0.1".parse().unwrap(),
@@ -1839,7 +1839,7 @@ mod tests {
             waited += 1;
             assert!(waited < 100, "the light still shows on although the command failed");
         }
-        assert_eq!(db.write(light, iid::LIGHTBULB + 2, &json!(250), &context), Err(harbormaster_hap::model::status::INVALID_VALUE));
+        assert_eq!(db.write(light, iid::LIGHTBULB + 2, &json!(250), &context), Err(gantry_hap::model::status::INVALID_VALUE));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1926,7 +1926,7 @@ mod tests {
     /// Replays a real capture when one is available; see `protect-capture`.
     #[test]
     fn replays_a_real_capture_if_present() {
-        let Some(dir) = std::env::var_os("HARBORMASTER_CAPTURE_DIR").map(PathBuf::from) else { return };
+        let Some(dir) = std::env::var_os("GANTRY_CAPTURE_DIR").map(PathBuf::from) else { return };
         let bootstrap: Value = serde_json::from_slice(&std::fs::read(dir.join("bootstrap.json")).unwrap()).unwrap();
         let state = std::env::temp_dir().join(format!("hm-protect-{}-replay", std::process::id()));
         let _ = std::fs::remove_dir_all(&state);
@@ -2003,7 +2003,7 @@ mod unlock_tests {
             "POST /api/auth/login HTTP/1.1" => {
                 logins.fetch_add(1, Ordering::SeqCst);
                 let json: Value = serde_json::from_str(body).unwrap_or_default();
-                if json["username"] == "harbormaster" && json["password"] == password() {
+                if json["username"] == "gantry" && json["password"] == password() {
                     reply("200 OK", "Set-Cookie: TOKEN=session-1; Path=/; HttpOnly\r\nX-CSRF-Token: csrf-1\r\n", "{}")
                 } else {
                     reply("401 Unauthorized", "", "{}")
@@ -2087,14 +2087,14 @@ mod unlock_tests {
         let config = config::Protect {
             host: "localhost".into(),
             port: console.port,
-            username: "harbormaster".into(),
+            username: "gantry".into(),
             fingerprint: Some(console.fingerprint.to_string()),
             devices: None,
             name_prefix: String::new(),
             name_suffix: String::new(),
         };
         let protect = ProtectBridge::prepare(&dir, config, store.clone(), db.clone(), vault.clone()).unwrap();
-        let hap = harbormaster_hap::Config {
+        let hap = gantry_hap::Config {
             name: "Test".into(),
             model: "Test".into(),
             listen: "127.0.0.1:0".parse().unwrap(),

@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
-use harbormaster_hap::model::kind;
-use harbormaster_hap::{Accessory, Bridge, Characteristic, Config, Database, Format, Info, Store};
+use gantry_hap::model::kind;
+use gantry_hap::{Accessory, Bridge, Characteristic, Config, Database, Format, Info, Store};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -54,14 +54,14 @@ pub async fn run(options: Options, logs: LogBuffer) -> Result<()> {
     let device_id = store.device_id();
     // The last two bytes of the id tell bridges apart. The store has
     // checked the id's shape, so the tail is always there.
-    let name = format!("Harbormaster {}", device_id.get(12..).unwrap_or_default().replace(':', ""));
+    let name = format!("Gantry {}", device_id.get(12..).unwrap_or_default().replace(':', ""));
 
     let db = Database::new();
     let mut bridge_accessory = Accessory::new(
         1,
         &Info {
             name: &name,
-            manufacturer: "Harbormaster",
+            manufacturer: "Gantry",
             model: "Bridge",
             serial_number: &device_id,
             firmware_revision: VERSION,
@@ -86,7 +86,7 @@ pub async fn run(options: Options, logs: LogBuffer) -> Result<()> {
     let fleet = if options.demo && protect.is_none() { crate::demo::Fleet::publish(&store, &db)? } else { None };
     let console_host = console_host.or(fleet.as_ref().map(|_| crate::demo::CONSOLE.to_owned()));
     // The password is looked for once, here. With none to be found the
-    // bridge still starts and waits for `harbormaster unlock`.
+    // bridge still starts and waits for `gantry unlock`.
     let vault = protect.as_ref().map(|p| Vault::new(crate::secrets::at_start(&options.state_dir, &p.username)));
     let protect = match (protect, &vault) {
         (Some(protect), Some(vault)) => {
@@ -96,7 +96,7 @@ pub async fn run(options: Options, logs: LogBuffer) -> Result<()> {
     };
 
     let config =
-        Config { name: name.clone(), model: "Harbormaster".into(), listen: options.listen,
+        Config { name: name.clone(), model: "Gantry".into(), listen: options.listen,
         advertise: true,
         snapshots: protect.as_ref().map(|p| p.snapshots()),
     };
@@ -173,7 +173,7 @@ async fn bind_control_socket(path: &Path) -> Result<UnixListener> {
         );
     }
     if UnixStream::connect(path).await.is_ok() {
-        bail!("another Harbormaster daemon is already running with this state directory");
+        bail!("another Gantry daemon is already running with this state directory");
     }
     // Nothing answered, so any file here is left over from a crashed daemon.
     match std::fs::remove_file(path) {
@@ -195,7 +195,7 @@ fn add_demo_sensor(store: &Store, db: &Arc<Database>) -> Result<()> {
         aid,
         &Info {
             name: "Demo Temperature",
-            manufacturer: "Harbormaster",
+            manufacturer: "Gantry",
             model: "Demo",
             serial_number: "demo-1",
             firmware_revision: VERSION,
@@ -476,8 +476,8 @@ fn devices(
     choices: Vec<(String, overrides::Entry)>,
     affix: &(String, String),
 ) -> Vec<control::Device> {
-    use harbormaster_hap::camera::kind::CAMERA_RTP_STREAM_MANAGEMENT;
-    use harbormaster_hap::recording::kind::{ACTIVE, CAMERA_RECORDING_MANAGEMENT};
+    use gantry_hap::camera::kind::CAMERA_RTP_STREAM_MANAGEMENT;
+    use gantry_hap::recording::kind::{ACTIVE, CAMERA_RECORDING_MANAGEMENT};
     fn list(v: &Value) -> &[Value] {
         v.as_array().map_or(&[], Vec::as_slice)
     }
@@ -732,8 +732,8 @@ mod tests {
 
     #[test]
     fn devices_combine_the_database_with_the_status_board() {
-        use harbormaster_hap::camera::kind::CAMERA_RTP_STREAM_MANAGEMENT;
-        use harbormaster_hap::recording::kind::{ACTIVE, CAMERA_RECORDING_MANAGEMENT};
+        use gantry_hap::camera::kind::CAMERA_RTP_STREAM_MANAGEMENT;
+        use gantry_hap::recording::kind::{ACTIVE, CAMERA_RECORDING_MANAGEMENT};
         let db = Database::new();
         let info = |name: &'static str| Info {
             name,

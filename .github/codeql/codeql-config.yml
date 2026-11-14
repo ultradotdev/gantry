@@ -1,4 +1,4 @@
-name: Harbormaster
+name: Gantry
 
 # Two files are left out of scanning, and only these two. Each holds one
 # kind of line that a scanner cannot tell from a mistake, kept apart from
@@ -12,4 +12,4 @@ paths-ignore:
   # The lines that tell the person at the terminal which Protect account
   # is in use. The scanner reads an account name as sensitive; no
   # password, key or token is ever passed to this file.
-  - crates/harbormaster/src/account_lines.rs
+  - crates/gantry/src/account_lines.rs

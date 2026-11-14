@@ -1,10 +1,10 @@
-//! `harbormaster protect-check`: walks through connecting to UniFi Protect
-//! and prints what Harbormaster can see, without changing anything.
+//! `gantry protect-check`: walks through connecting to UniFi Protect
+//! and prints what Gantry can see, without changing anything.
 
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use harbormaster_protect::{fetch_fingerprint, Client, Fingerprint};
+use gantry_protect::{fetch_fingerprint, Client, Fingerprint};
 
 use crate::{config, secrets};
 
@@ -130,7 +130,7 @@ fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
     Ok(file)
 }
 
-/// `harbormaster protect-capture`: records the device inventory and a
+/// `gantry protect-capture`: records the device inventory and a
 /// sample of realtime updates to files, for developing against real data.
 pub async fn capture(state_dir: &Path, seconds: u64) -> Result<()> {
     use std::io::Write;
@@ -187,10 +187,10 @@ pub async fn capture(state_dir: &Path, seconds: u64) -> Result<()> {
     Ok(())
 }
 
-/// `harbormaster protect-feed`: records a few seconds of a camera's native
+/// `gantry protect-feed`: records a few seconds of a camera's native
 /// live feed to a playable file and reports how the feed behaved.
 pub async fn feed(state_dir: &Path, camera: Option<&str>, channel: u8, lens: u8, seconds: u64) -> Result<()> {
-    use harbormaster_protect::{FeedOptions, Segment};
+    use gantry_protect::{FeedOptions, Segment};
     use std::io::Write;
     let Some((client, protect)) = sign_in(state_dir).await? else { return Ok(()) };
     let bootstrap = client.bootstrap().await?;
