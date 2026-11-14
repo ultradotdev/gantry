@@ -15,8 +15,8 @@ path = "src/main.rs"
 bytes = "1.12.1"
 anyhow = "1.0.104"
 libc = "0.2.191"
-gantry-hap = { version = "0.1.3", path = "../hap" }
-gantry-protect = { version = "0.1.3", path = "../protect" }
+gantry-hap = { version = "0.1.4", path = "../hap" }
+gantry-protect = { version = "0.1.4", path = "../protect" }
 qrcode = { version = "0.14.1", default-features = false }
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
