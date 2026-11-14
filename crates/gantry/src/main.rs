@@ -15,8 +15,6 @@ mod keychain;
 mod launchd;
 mod logbuf;
 mod logfile;
-#[cfg(feature = "mock-console")]
-mod mock_console;
 mod overrides;
 mod password;
 mod protect_bridge;
@@ -99,9 +97,6 @@ enum Command {
     ProtectCheck,
     ProtectCapture,
     ProtectFeed,
-    /// A pretend console for testing. Only builds made with the
-    /// `mock-console` feature have it, so it is left out of the help.
-    MockConsole,
 }
 
 struct Args {
@@ -172,7 +167,6 @@ fn parse_args(input: impl IntoIterator<Item = String>) -> Result<Args> {
             "protect-check" => args.command = Command::ProtectCheck,
             "protect-capture" => args.command = Command::ProtectCapture,
             "protect-feed" => args.command = Command::ProtectFeed,
-            "mock-console" => args.command = Command::MockConsole,
             "--camera" => args.camera = Some(value()?),
             "--lens" => args.lens = value()?.parse().context("--lens expects a small number")?,
             "--channel" => args.channel = value()?.parse().context("--channel expects a small number")?,
@@ -262,16 +256,6 @@ fn main() -> Result<()> {
             args.lens,
             args.seconds,
         )),
-        #[cfg(feature = "mock-console")]
-        Command::MockConsole => {
-            let listen = if args.listen_given { args.listen } else { mock_console::DEFAULT_LISTEN.parse()? };
-            mock_console::run(&args.state_dir, listen, args.stdin)
-        }
-        #[cfg(not(feature = "mock-console"))]
-        Command::MockConsole => bail!(
-            "this build has no mock console: it is a testing aid, left out of releases. \
-             Build from source with `cargo build --features mock-console` to get it"
-        ),
         Command::Daemon => {
             let logs = logbuf::LogBuffer::new();
             // The log file lives in the state directory, which holds

@@ -129,15 +129,6 @@ presents the exact certificate you confirmed during setup.
 - Chimes, smoke and CO alarms, and Protect's sound detections are not
   published.
 
-## Trying it without a console
-
-A build made from source with `--features mock-console` gains
-`gantry mock-console`, a pretend UniFi Protect console with an
-invented site. With it, setup, sign-in, the dashboard, events and live
-video can be tried on a spare Mac or virtual machine with no real console.
-Released builds do not contain it. See
-[docs/mock-console.md](docs/mock-console.md).
-
 ## Files
 
 Everything lives in `~/Library/Application Support/gantry`:
