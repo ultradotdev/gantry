@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use crate::{client, control, daemon};
+use crate::{client, control, daemon, say};
 
 /// The service's name to the service manager.
 pub const LABEL: &str = "dev.ultra.gantry";
@@ -117,7 +117,27 @@ impl Step {
         }
         bail!("`{}` failed: {last}", self.shell())
     }
+
+    /// Runs the step through `sudo` on this terminal. `sudo` asks for the
+    /// password itself, on the terminal; this program never sees it.
+    fn run_as_administrator(&self) -> Result<()> {
+        let attempts = if self.retry { 10 } else { 1 };
+        for attempt in 0..attempts {
+            if attempt > 0 {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            let status = std::process::Command::new(SUDO).arg("--").args(&self.argv).status().with_context(|| format!("running {SUDO}"))?;
+            if status.success() {
+                return Ok(());
+            }
+        }
+        bail!("`sudo {}` did not succeed", self.shell())
+    }
 }
+
+/// By its full path, so that nothing earlier on the command path is run
+/// with the administrator's password instead.
+const SUDO: &str = "/usr/bin/sudo";
 
 /// Quotes an argument for a POSIX shell, if it needs it.
 fn quote(argument: &str) -> String {
@@ -358,11 +378,15 @@ fn offer_link(spec: &Spec) {
     } else if std::fs::symlink_metadata(link).is_ok_and(|present| !present.file_type().is_symlink()) {
         println!("{LINK} is some other program, so no link was made there.");
     } else {
+        let command = format!(
+            "sudo /bin/mkdir -p {} && sudo /bin/ln -sfn {} {LINK}",
+            quote(&link.parent().unwrap_or(Path::new("/")).to_string_lossy()),
+            quote(&spec.program.to_string_lossy()),
+        );
         println!(
             "To run it as plain `gantry`, link it onto the command path. That takes\n\
-             administrator rights, so run these yourself:\n\n    sudo /bin/mkdir -p {}\n    sudo /bin/ln -sfn {} {LINK}\n",
-            link.parent().unwrap_or(Path::new("/")).display(),
-            quote(&spec.program.to_string_lossy()),
+             administrator rights, so it is yours to run:\n\n{}\n",
+            say::copy_block(&command)
         );
     }
 }
@@ -416,22 +440,63 @@ fn report_started(spec: &Spec, old_pid: Option<u32>) -> Result<()> {
 }
 
 /// How far installing the service got.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Installed {
     /// The service is in place and the daemon answers.
     Running,
-    /// The commands that need administrator rights have been printed and
-    /// are the owner's to run; until then there is no service.
-    AwaitsOwner,
+    /// What is left needs administrator rights and is the owner's to
+    /// run; until then there is no service.
+    AwaitsOwner {
+        /// The one line that does it.
+        command: String,
+        /// The same, as the commands it is made of.
+        steps: Vec<Step>,
+        /// A daemon running by hand, which the service cannot start beside.
+        in_the_way: Option<u32>,
+    },
+}
+
+/// What to say about a daemon that has to stop before the service starts.
+pub fn make_way(pid: u32) -> String {
+    format!(
+        "A Gantry daemon is running now (pid {pid}) and the service cannot start beside it.\n\
+         Stop it first, with Ctrl-C in its terminal or:\n\n    kill {pid}\n"
+    )
+}
+
+/// Runs what [`Installed::AwaitsOwner`] left, through `sudo` on this
+/// terminal, once the owner has agreed to that.
+pub fn run_as_administrator(state_dir: &Path, steps: &[Step], in_the_way: Option<u32>) -> Result<()> {
+    if let Some(pid) = in_the_way {
+        println!("Stopping the daemon running now (pid {pid}) so that the service takes over...");
+        stop_daemon(state_dir, pid);
+    }
+    steps.iter().try_for_each(Step::run_as_administrator)
+}
+
+/// Steps that take administrator rights, as one line to paste: one line
+/// asks for the password once and cannot lose its second half to the
+/// password prompt.
+fn as_administrator(steps: &[Step]) -> String {
+    steps.iter().map(|step| format!("sudo {}", step.shell())).collect::<Vec<_>>().join(" && ")
 }
 
 /// `gantry service install`: installs the service and says what is
 /// left to do by hand.
 pub fn install(state_dir: &Path, options: &Options) -> Result<()> {
-    if install_step(state_dir, options)? == Installed::AwaitsOwner {
+    if let Installed::AwaitsOwner { command, in_the_way, .. } = install_step(state_dir, options)? {
         let spec = spec(state_dir, options)?;
         println!(
-            "Then check on it and give it the Protect password:\n\n    {}\n    {}\n",
+            "One command is left. It puts the service where the system looks, which takes\n\
+             administrator rights, so it is yours to run:\n\n{}\n",
+            say::copy_block(&command)
+        );
+        if let Some(pid) = in_the_way {
+            println!("{}", make_way(pid));
+        }
+        println!(
+            "The service starts at once and again after every reboot. Then check on it and\n\
+             give it the Protect password:\n\n    {}\n    {}\n",
             invocation(&spec, "service status"),
             invocation(&spec, "unlock")
         );
@@ -448,7 +513,7 @@ pub fn install_step(state_dir: &Path, options: &Options) -> Result<Installed> {
     let source = std::env::current_exe().context("finding this program's own file")?;
     let binary_changed = install_binary(&source, &spec.program)?;
     if binary_changed {
-        println!("Installed the binary at {}.", spec.program.display());
+        println!("{}", say::done(&format!("Installed the program at {}.", spec.program.display())));
     }
     prepare_output(&spec)?;
     offer_link(&spec);
@@ -489,21 +554,12 @@ pub fn install_step(state_dir: &Path, options: &Options) -> Result<Installed> {
     if manager.needs_root(&spec) {
         let staged = spec.state_dir.join("service").join(unit_path.file_name().context("service file has no name")?);
         write_atomically(&staged, &unit)?;
-        println!(
-            "The service file is ready. Putting it where the system looks takes administrator rights,\n\
-             so run these yourself:\n"
-        );
-        for step in manager.load_steps(&spec, &staged, loaded) {
-            println!("    sudo {}", step.shell());
-        }
-        if let (Some(pid), false) = (old_pid, loaded) {
-            println!(
-                "\nA daemon is running now (pid {pid}) and the service cannot start beside it.\n\
-                 Stop it first, with Ctrl-C in its terminal or:\n\n    kill {pid}"
-            );
-        }
-        println!("\nIt starts at once and again after every reboot.\n");
-        return Ok(Installed::AwaitsOwner);
+        let steps = manager.load_steps(&spec, &staged, loaded);
+        return Ok(Installed::AwaitsOwner {
+            command: as_administrator(&steps),
+            steps,
+            in_the_way: old_pid.filter(|_| !loaded),
+        });
     }
 
     // A daemon running by hand would hold the control socket against the
@@ -533,13 +589,10 @@ pub fn uninstall(state_dir: &Path, options: &Options) -> Result<()> {
     // The link onto the command path goes too, if it is this installation's.
     let link = Path::new(LINK);
     if linked(&spec.program, link) && std::fs::remove_file(link).is_err() {
-        println!("The link at {LINK} is the administrator's to remove:\n\n    sudo /bin/rm {LINK}\n");
+        println!("The link at {LINK} is the administrator's to remove:\n\n{}\n", say::copy_block(&format!("sudo /bin/rm {LINK}")));
     }
     if manager.needs_root(&spec) {
-        println!("Removing the service takes administrator rights, so run these yourself:\n");
-        for step in steps {
-            println!("    sudo {}", step.shell());
-        }
+        println!("Removing the service takes administrator rights, so it is yours to run:\n\n{}", say::copy_block(&as_administrator(&steps)));
         println!("\nThe state directory, with the pairing and the binary, is left as it is.");
         return Ok(());
     }
@@ -564,11 +617,7 @@ fn installed(manager: &dyn Manager, state_dir: &Path) -> Result<Spec> {
 /// Returns whether they were run.
 fn carry_out(manager: &dyn Manager, spec: &Spec, steps: Vec<Step>, what: &str) -> Result<bool> {
     if manager.needs_root(spec) {
-        println!("{what} takes administrator rights, so run this yourself:\n");
-        for step in steps {
-            println!("    sudo {}", step.shell());
-        }
-        println!();
+        println!("{what} takes administrator rights, so it is yours to run:\n\n{}\n", say::copy_block(&as_administrator(&steps)));
         return Ok(false);
     }
     for step in steps {

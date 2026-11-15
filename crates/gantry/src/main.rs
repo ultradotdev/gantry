@@ -21,6 +21,7 @@ mod protect_bridge;
 mod protect_check;
 mod qr;
 mod recording;
+mod say;
 mod secrets;
 mod service;
 mod setup;

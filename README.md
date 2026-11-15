@@ -66,8 +66,10 @@ gantry setup
 
 It asks for the console's address and an account, shows you the
 certificate the console presents so you can confirm it is yours, signs in
-once to prove the account works, and installs the service. The one step
-that needs administrator rights is printed for you to run.
+once to prove the account works, and installs the service. Starting the
+service takes administrator rights: setup shows the commands and offers to
+run them, and macOS asks for your Mac password. You can also run them
+yourself.
 
 Create an account for Gantry in UniFi OS first: a local-access-only
 admin with access to Protect. Full management lets Gantry switch
