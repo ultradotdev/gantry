@@ -126,8 +126,9 @@ presents the exact certificate you confirmed during setup.
   seconds, with no restart.
 - **After an update**, the first connection attempt can fail and the retry
   a moment later succeeds. `gantry unlock` waits for that.
-- **Names.** Home keeps the name an accessory had when it was added.
-  Renaming in the dashboard changes what new accessories are called.
+- **Names.** Renaming a device in the dashboard renames it in the Home
+  app too. Once you rename an accessory in the Home app itself, Home keeps
+  your name there and stops following the dashboard.
 - Chimes, smoke and CO alarms, and Protect's sound detections are not
   published.
 
