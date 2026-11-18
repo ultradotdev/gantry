@@ -530,6 +530,7 @@ impl App {
                     KeyCode::Char('u') => self.start_unlock(),
                     KeyCode::Char('s') => self.toggle_shared(),
                     KeyCode::Char('r') => self.start_rename(),
+                    KeyCode::Char('R') => self.outbox.push(Command::Refresh),
                     KeyCode::Char('P') => self.edit_affix(Target::Prefix),
                     KeyCode::Char('S') => self.edit_affix(Target::Suffix),
                     KeyCode::Char(c @ '1'..='4') => self.toggle_detection(Detection::ALL[c as usize - '1' as usize]),
@@ -945,6 +946,11 @@ fn hints(app: &App) -> Vec<(&'static str, &'static str, Option<KeyCode>)> {
     hints.push(("w", "warnings", Some(KeyCode::Char('w'))));
     // Last, as the log's border also offers it.
     hints.push(("W", "wrap", Some(KeyCode::Char('W'))));
+    if app.state.is_some() {
+        // After the rest, so that a narrow terminal drops this first: the
+        // console's devices are read again every few minutes regardless.
+        hints.push(("R", "refresh", Some(KeyCode::Char('R'))));
+    }
     hints
 }
 
@@ -2220,6 +2226,18 @@ mod tests {
         assert!(!app.show_pairing);
         // And quit quits.
         assert!(!click(&mut app, at("q quit"), bottom));
+    }
+
+    #[test]
+    fn capital_r_asks_for_the_devices_to_be_read_again() {
+        let mut app = app_with(sample_state(true));
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.lines().last().unwrap().contains(" R refresh "), "{screen}");
+        app.handle(key(KeyCode::Char('R')));
+        assert_eq!(app.outbox, [Command::Refresh]);
+        // Detached from the service there is nobody to ask.
+        let mut detached = App::new();
+        assert!(!render_at(&mut detached, 120, 50).contains("R refresh"));
     }
 
     #[test]

@@ -97,7 +97,8 @@ gantry
 In the dashboard: arrows or the mouse to select, `s` to share or hide a
 device, `r` to rename it, `P` and `S` for a prefix or suffix on every name,
 `1` to `4` for person, vehicle, animal and package sensors (on the overview
-for every camera, on a camera for that one), `q` to quit.
+for every camera, on a camera for that one), `R` to look for new devices
+now, `q` to quit.
 
 After upgrading with Homebrew, run `gantry service install` once more
 so the service picks up the new version.
@@ -124,6 +125,9 @@ presents the exact certificate you confirmed during setup.
   Gantry under System Settings, Privacy & Security, Local Network.
   Setup says so and waits while you do; the service picks it up within
   seconds, with no restart.
+- **New devices.** A device you adopt in Protect appears in the Home app
+  on its own within five minutes. `R` in the dashboard looks for it right
+  away.
 - **After an update**, the first connection attempt can fail and the retry
   a moment later succeeds. `gantry unlock` waits for that.
 - **Names.** Home keeps the name an accessory had when it was added.
