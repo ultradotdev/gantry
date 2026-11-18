@@ -1431,8 +1431,13 @@ impl ProtectBridge {
             // A new name does not change the database's shape, so
             // controllers are told to read it again regardless.
             bridge.republish();
+            // Only now: a new accessory needs its readings, but a reading
+            // that changed nothing must not get ahead of the update stream.
+            // Motion that began while the inventory was being fetched would
+            // be set here quietly, and its update would then look like no
+            // change and start no recording.
+            self.devices.apply_states(&self.db, bootstrap);
         }
-        self.devices.apply_states(&self.db, bootstrap);
         Ok(changed)
     }
 }
@@ -2280,7 +2285,13 @@ mod unlock_tests {
 
         // The same devices again: nothing is rebuilt and HomeKit is not
         // told to read everything again.
-        assert_eq!(protect.take_inventory(&bridge, &client, &before).unwrap(), 0);
+        // Nor are readings touched: motion in this inventory is left for
+        // the update stream to report, so that it starts a recording.
+        let mut moving = before.clone();
+        moving["cameras"][0]["isMotionDetected"] = json!(true);
+        let quiet = db.to_json().to_string();
+        assert_eq!(protect.take_inventory(&bridge, &client, &moving).unwrap(), 0);
+        assert_eq!(db.to_json().to_string(), quiet, "an unchanged inventory must not set readings");
         assert_eq!((published(), store.config_number()), (count, number));
 
         // A sensor adopted since, with nothing renamed or reshared.
