@@ -428,6 +428,13 @@ fn accessories(db: &Value) -> Vec<control::Accessory> {
 /// Carries out a request from the terminal interface. Returns what to log:
 /// what was done, or why it was not.
 fn run_command(overrides: Option<&Overrides>, connected: bool, command: &Command) -> Result<String, String> {
+    if *command == Command::Refresh {
+        if !connected {
+            return Err("cannot look for new devices: the console is not connected".into());
+        }
+        crate::protect_bridge::request_inventory();
+        return Ok("reading the devices in UniFi Protect again, as asked in the terminal".into());
+    }
     let overrides = overrides.ok_or("devices cannot be changed: no choices file is loaded")?;
     // The bridge acts on a change when the console next speaks to it.
     let when = if connected { "" } else { "; this takes effect when the console is reachable" };
@@ -456,7 +463,7 @@ fn run_command(overrides: Option<&Overrides>, connected: bool, command: &Command
             let what = if *on { "will have" } else { "will no longer have" };
             Ok(format!("{whose}: {what} a {} sensor in HomeKit, as asked in the terminal{when}", kind.word()))
         }
-        Command::Unlock { .. } => Err("a password is not a device setting".into()),
+        Command::Unlock { .. } | Command::Refresh => Err("that is not a device setting".into()),
         Command::Rename { key, name } => {
             let entry = overrides.rename(key, name.as_deref())?;
             Ok(match &entry.name {
@@ -863,6 +870,10 @@ mod tests {
             "Front Door: will no longer be shared with HomeKit, as asked in the terminal"
         );
         assert!(choices.is_hidden(&key));
+        // Reading the devices again needs a console to read them from, and
+        // no choices file.
+        assert!(run_command(None, true, &Command::Refresh).unwrap().contains("reading the devices"));
+        assert!(run_command(None, false, &Command::Refresh).unwrap_err().contains("not connected"));
         let rename = Command::Rename { key: key.clone(), name: Some("Porch".into()) };
         let said = run_command(Some(&choices), false, &rename).unwrap();
         assert!(said.starts_with("Front Door: will be published as Porch") && said.contains("when the console is reachable"));

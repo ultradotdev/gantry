@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use gantry_hap::model::kind;
@@ -991,7 +991,8 @@ impl Devices {
         }
     }
 
-    /// Brings every device up to date from a full inventory.
+    /// Brings every device up to date from a full inventory read on
+    /// connecting, when events may have been missed.
     fn apply_snapshot(&self, db: &Database, bootstrap: &Value) {
         // Events that ended while the console was out of reach were missed.
         let mut events = self.events.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1004,6 +1005,12 @@ impl Devices {
             }
         }
         drop(events);
+        self.apply_states(db, bootstrap);
+    }
+
+    /// Sets every device's readings from a full inventory. Detections in
+    /// progress are left as they are: while connected, nothing was missed.
+    fn apply_states(&self, db: &Database, bootstrap: &Value) {
         for kind in [Kind::Camera, Kind::Sensor, Kind::Light] {
             for device in bootstrap[kind.section()].as_array().into_iter().flatten() {
                 if let Some(id) = device["id"].as_str() {
@@ -1011,6 +1018,16 @@ impl Devices {
                 }
             }
         }
+    }
+
+    /// Whether an update speaks of a device that is not published and may
+    /// now be ready to be: one just added to the console, or one whose
+    /// adoption moved on. Such a device is only in the full inventory.
+    fn is_news(&self, update: &Update) -> bool {
+        let ours = [Kind::Camera, Kind::Sensor, Kind::Light].iter().any(|kind| kind.model_key() == update.model_key);
+        let known = self.defs.iter().any(|def| def.kind.model_key() == update.model_key && def.id == update.id);
+        let adoption = ["isAdopted", "isAdopting"].iter().any(|field| update.data.get(field).is_some());
+        ours && !known && (update.action == "add" || update.action == "update" && adoption)
     }
 
     fn apply_update(&self, db: &Database, update: &Update) {
@@ -1076,6 +1093,23 @@ pub struct ProtectBridge {
     /// The password for every sign-in, once there is one.
     vault: Arc<Vault>,
 }
+
+/// Set when the owner asks, from the dashboard, for the console's devices
+/// to be read again.
+static INVENTORY_ASKED: AtomicBool = AtomicBool::new(false);
+
+/// Has the bridge read the console's devices again when it next can.
+pub fn request_inventory() {
+    INVENTORY_ASKED.store(true, Ordering::Relaxed);
+}
+
+/// How often the console's devices are read again while connected, so
+/// that one added in Protect turns up without anyone asking.
+const INVENTORY_EVERY: Duration = Duration::from_secs(300);
+
+/// How soon after the last reading a hint of a new device brings the
+/// next. Adoption sends a flurry of updates; one reading answers them all.
+const INVENTORY_SPACING: Duration = Duration::from_secs(15);
 
 /// How long to leave the console alone after it refuses to let this
 /// account sign in for a reason a quick retry cannot fix.
@@ -1284,13 +1318,30 @@ impl ProtectBridge {
         self.vault.signed_in(self.devices.len());
 
         let mut updates = client.updates(bootstrap["lastUpdateId"].as_str()).await?;
+        // When the devices were last read, and whether something since
+        // suggests there is a new one.
+        let mut read = Instant::now();
+        let mut hinted = false;
         // A busy site sends several updates a second and even a quiet one
         // sends statistics every few seconds, so a long silence means the
         // connection has died without saying so. Reconnect rather than sit
         // deaf to motion and doorbell presses.
         loop {
-            if crate::overrides::take_changed() {
-                self.refresh(bridge, &client).await?;
+            let changed = crate::overrides::take_changed();
+            let asked = INVENTORY_ASKED.swap(false, Ordering::Relaxed);
+            if changed || asked {
+                let found = self.refresh(bridge, &client).await?;
+                if asked && found == 0 {
+                    tracing::info!("read the devices in UniFi Protect again: nothing new");
+                }
+                (read, hinted) = (Instant::now(), false);
+            } else if read.elapsed() >= if hinted { INVENTORY_SPACING } else { INVENTORY_EVERY } {
+                // Nobody is waiting on this one, so a failure is only noted:
+                // the update stream says soon enough if the console has gone.
+                if let Err(why) = self.refresh(bridge, &client).await {
+                    tracing::warn!("could not read the devices in UniFi Protect again: {why:#}");
+                }
+                (read, hinted) = (Instant::now(), false);
             }
             match tokio::time::timeout(UPDATE_SILENCE, updates.next()).await {
                 Ok(update) => match update? {
@@ -1307,7 +1358,10 @@ impl ProtectBridge {
                             bridge.config_changed();
                         }
                     }
-                    Some(update) => self.devices.apply_update(&self.db, &update),
+                    Some(update) => {
+                        hinted |= self.devices.is_news(&update);
+                        self.devices.apply_update(&self.db, &update);
+                    }
                     None => return Ok(()),
                 },
                 Err(_) => anyhow::bail!("no updates for {} seconds", UPDATE_SILENCE.as_secs()),
@@ -1348,24 +1402,43 @@ impl Devices {
 }
 
 impl ProtectBridge {
-    /// Publishes again from a fresh inventory, after the owner changed
-    /// which devices are shared or what they are called.
-    async fn refresh(&mut self, bridge: &Bridge, client: &Client) -> Result<()> {
+    /// Reads the console's devices again and publishes what that calls
+    /// for: after the owner changed which devices are shared or what they
+    /// are called, when they ask, and every so often for devices added in
+    /// Protect. Returns how many accessories were added, rebuilt or withdrawn.
+    async fn refresh(&mut self, bridge: &Bridge, client: &Arc<Client>) -> Result<usize> {
         let bootstrap = client.bootstrap_raw().await?;
+        self.take_inventory(bridge, client, &bootstrap)
+    }
+
+    /// Publishes what a fresh inventory calls for. Devices gone from it are
+    /// left alone: the console says when one is deleted, and one that is
+    /// merely missing from a reading keeps its place in HomeKit.
+    fn take_inventory(&mut self, bridge: &Bridge, client: &Arc<Client>, bootstrap: &Value) -> Result<usize> {
+        // A camera first seen now needs its feeds known before it is watched.
+        self.live.update(client.clone(), bootstrap);
         let filter = self.config.devices.as_deref();
-        let defs: Vec<DeviceDef> = definitions(&bootstrap).into_iter().filter(|def| selected(def, filter)).collect();
+        let defs: Vec<DeviceDef> = definitions(bootstrap).into_iter().filter(|def| selected(def, filter)).collect();
         let defs = crate::overrides::apply(defs, true);
-        let changed = self.devices.retitle(crate::overrides::affix(), &self.store, &self.db)?
-            + self.devices.add(&defs, &self.store, &self.db)?
-            + self.devices.drop_where(&self.db, crate::overrides::hidden);
+        let retitled = self.devices.retitle(crate::overrides::affix(), &self.store, &self.db)?;
+        let added = self.devices.add(&defs, &self.store, &self.db)?;
+        if added > 0 {
+            tracing::info!("added or updated {added} UniFi Protect devices");
+        }
+        let changed = retitled + added + self.devices.drop_where(&self.db, crate::overrides::hidden);
         if changed > 0 {
             save_cache(&self.state_dir, &self.devices.defs);
             // A new name does not change the database's shape, so
             // controllers are told to read it again regardless.
             bridge.republish();
+            // Only now: a new accessory needs its readings, but a reading
+            // that changed nothing must not get ahead of the update stream.
+            // Motion that began while the inventory was being fetched would
+            // be set here quietly, and its update would then look like no
+            // change and start no recording.
+            self.devices.apply_states(&self.db, bootstrap);
         }
-        self.devices.apply_snapshot(&self.db, &bootstrap);
-        Ok(())
+        Ok(changed)
     }
 }
 
@@ -2172,6 +2245,97 @@ mod unlock_tests {
         assert!(said("connected to UniFi Protect"), "{lines:?}");
         let everything = format!("{lines:?} {:?} {:?}", vault.view(), outcome);
         assert!(!everything.contains(password()), "a password leaked: {everything}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_device_added_in_protect_is_published_from_the_next_reading() {
+        let dir = std::env::temp_dir().join(format!("hm-protect-{}-inventory", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(Store::open(dir.join("state.json")).unwrap());
+        let db = Database::new();
+        let pin = Fingerprint::of(b"a certificate");
+        let config = config::Protect {
+            host: "localhost".into(),
+            port: 1,
+            username: "gantry".into(),
+            fingerprint: Some(pin.to_string()),
+            devices: None,
+            name_prefix: String::new(),
+            name_suffix: String::new(),
+        };
+        let mut protect = ProtectBridge::prepare(&dir, config, store.clone(), db.clone(), Vault::new(None)).unwrap();
+        let hap = gantry_hap::Config {
+            name: "Test".into(),
+            model: "Test".into(),
+            listen: "127.0.0.1:0".parse().unwrap(),
+            advertise: false,
+            snapshots: None,
+        };
+        let bridge = Bridge::start(hap, store.clone(), db.clone()).await.unwrap();
+        // Never spoken to: the inventory is handed over directly.
+        let client = Arc::new(Client::new("localhost", 1, pin));
+        let published = || db.to_json()["accessories"].as_array().unwrap().len();
+
+        let before = super::tests::bootstrap();
+        let known = definitions(&before).len();
+        assert_eq!(protect.take_inventory(&bridge, &client, &before).unwrap(), known);
+        let (count, number) = (published(), store.config_number());
+
+        // The same devices again: nothing is rebuilt and HomeKit is not
+        // told to read everything again.
+        // Nor are readings touched: motion in this inventory is left for
+        // the update stream to report, so that it starts a recording.
+        let mut moving = before.clone();
+        moving["cameras"][0]["isMotionDetected"] = json!(true);
+        let quiet = db.to_json().to_string();
+        assert_eq!(protect.take_inventory(&bridge, &client, &moving).unwrap(), 0);
+        assert_eq!(db.to_json().to_string(), quiet, "an unchanged inventory must not set readings");
+        assert_eq!((published(), store.config_number()), (count, number));
+
+        // A sensor adopted since, with nothing renamed or reshared.
+        let mut after = before.clone();
+        after["sensors"].as_array_mut().unwrap().push(json!({
+            "id": "sen9", "mac": "BB09", "name": "Gate", "type": "USL-Entry-US", "state": "CONNECTED",
+            "mountType": "door", "isOpened": true, "batteryStatus": {"percentage": 80, "isLow": false},
+            "motionSettings": {"isEnabled": false}, "temperatureSettings": {"isEnabled": false}
+        }));
+        assert_eq!(protect.take_inventory(&bridge, &client, &after).unwrap(), 1);
+        assert_eq!(published(), count + 1);
+        assert!(store.config_number() > number, "HomeKit must be told the accessories changed");
+        assert!(db.to_json().to_string().contains("Gate"));
+        assert!(load_cache(&dir).iter().any(|def| def.id == "sen9"), "it is remembered for the next start");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_news_of_an_unpublished_device_calls_for_another_reading() {
+        let dir = std::env::temp_dir().join(format!("hm-protect-{}-news", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(dir.join("state.json")).unwrap();
+        let db = Database::new();
+        let mut devices = Devices::default();
+        devices.add(&definitions(&super::tests::bootstrap()), &store, &db).unwrap();
+        let update = |action: &str, model_key: &str, id: &str, data: Value| Update {
+            action: action.into(),
+            model_key: model_key.into(),
+            id: id.into(),
+            new_update_id: None,
+            data,
+        };
+        // Added to the console, and adoption moving on.
+        assert!(devices.is_news(&update("add", "sensor", "sen9", json!({"isAdopting": true}))));
+        assert!(devices.is_news(&update("update", "sensor", "sen9", json!({"isAdopted": true}))));
+        assert!(devices.is_news(&update("update", "camera", "cam3", json!({"isAdopting": false}))));
+        // The steady chatter of a device that is not published is not news.
+        assert!(!devices.is_news(&update("update", "sensor", "sen9", json!({"stats": {"light": {"value": 3}}}))));
+        // Nor is anything about a published device, an event or another kind of thing.
+        assert!(!devices.is_news(&update("update", "sensor", "sen1", json!({"isAdopted": true}))));
+        assert!(!devices.is_news(&update("add", "event", "ev1", json!({"camera": "cam9"}))));
+        assert!(!devices.is_news(&update("add", "chime", "chi1", json!({}))));
+        assert!(!devices.is_news(&update("remove", "sensor", "sen9", Value::Null)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -52,6 +52,8 @@ pub enum Command {
         detection: String,
         on: bool,
     },
+    /// Read the console's devices again now, for one just added in Protect.
+    Refresh,
 }
 
 /// Every struct here defaults its missing fields and ignores unknown ones,
