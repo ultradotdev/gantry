@@ -24,4 +24,4 @@ x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 
 # macOS registers with the system Bonjour daemon instead.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-mdns-sd = "0.21.7"
+mdns-sd = "0.22.0"
