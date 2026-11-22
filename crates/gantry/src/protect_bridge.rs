@@ -1111,6 +1111,18 @@ const INVENTORY_EVERY: Duration = Duration::from_secs(300);
 /// next. Adoption sends a flurry of updates; one reading answers them all.
 const INVENTORY_SPACING: Duration = Duration::from_secs(15);
 
+/// How every answer to a request for a fresh reading begins. The dashboard
+/// knows the answer by it.
+pub const INVENTORY_READ: &str = "read the devices in UniFi Protect again";
+
+/// What a reading asked for in the dashboard found: how many accessories
+/// it changed, how many devices the console listed, and how many are
+/// published now.
+fn inventory_report(changed: usize, listed: usize, published: usize) -> String {
+    let found = if changed == 0 { "nothing new".to_owned() } else { format!("{changed} added or changed") };
+    format!("{INVENTORY_READ}: {found} (the console lists {listed}, {published} are in HomeKit)")
+}
+
 /// How long to leave the console alone after it refuses to let this
 /// account sign in for a reason a quick retry cannot fix.
 const REFUSED_DELAY: Duration = Duration::from_secs(300);
@@ -1330,9 +1342,11 @@ impl ProtectBridge {
             let changed = crate::overrides::take_changed();
             let asked = INVENTORY_ASKED.swap(false, Ordering::Relaxed);
             if changed || asked {
-                let found = self.refresh(bridge, &client).await?;
-                if asked && found == 0 {
-                    tracing::info!("read the devices in UniFi Protect again: nothing new");
+                let (found, listed) = self.refresh(bridge, &client).await?;
+                if asked {
+                    // The dashboard shows this line as the answer to the key,
+                    // and the counts say where a missing device went missing.
+                    tracing::info!("{}", inventory_report(found, listed, self.devices.len()));
                 }
                 (read, hinted) = (Instant::now(), false);
             } else if read.elapsed() >= if hinted { INVENTORY_SPACING } else { INVENTORY_EVERY } {
@@ -1406,9 +1420,11 @@ impl ProtectBridge {
     /// for: after the owner changed which devices are shared or what they
     /// are called, when they ask, and every so often for devices added in
     /// Protect. Returns how many accessories were added, rebuilt or withdrawn.
-    async fn refresh(&mut self, bridge: &Bridge, client: &Arc<Client>) -> Result<usize> {
+    /// Also returns how many devices the console listed.
+    async fn refresh(&mut self, bridge: &Bridge, client: &Arc<Client>) -> Result<(usize, usize)> {
         let bootstrap = client.bootstrap_raw().await?;
-        self.take_inventory(bridge, client, &bootstrap)
+        let listed = definitions(&bootstrap).len();
+        Ok((self.take_inventory(bridge, client, &bootstrap)?, listed))
     }
 
     /// Publishes what a fresh inventory calls for. Devices gone from it are
@@ -2307,6 +2323,12 @@ mod unlock_tests {
         assert!(db.to_json().to_string().contains("Gate"));
         assert!(load_cache(&dir).iter().any(|def| def.id == "sen9"), "it is remembered for the next start");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_requested_reading_reports_what_it_found_with_the_counts() {
+        assert_eq!(inventory_report(0, 21, 19), "read the devices in UniFi Protect again: nothing new (the console lists 21, 19 are in HomeKit)");
+        assert!(inventory_report(2, 21, 21).starts_with(&format!("{INVENTORY_READ}: 2 added or changed (")));
     }
 
     #[test]

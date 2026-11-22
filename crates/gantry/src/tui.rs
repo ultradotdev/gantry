@@ -45,6 +45,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REFRESH_SINCE: [u64; 3] = [0, 1, 6];
 /// How long the footer keeps the answer to a key press.
 const NOTICE_FOR: Duration = Duration::from_secs(8);
+/// How long the footer waits for the service to say what a refresh found.
+/// The service acts on the request when the console next speaks to it.
+const REFRESH_WAIT: Duration = Duration::from_secs(30);
+const REFRESHING: &str = "Reading the devices in UniFi Protect again...";
 /// How to bring the service up to this command's version.
 const UPDATE_SERVICE: &str = "gantry service install, then gantry unlock";
 
@@ -168,6 +172,8 @@ struct App {
     /// The answer to the last key that shows nothing else on screen, and
     /// when it was given. The footer shows it for a few seconds.
     notice: Option<(String, Instant)>,
+    /// When a refresh was asked for that the service has not answered yet.
+    refreshing: Option<Instant>,
     /// What can be clicked in the detail pane, by line number.
     actions: Vec<Hit>,
     /// Where the confirmation's Yes was last drawn.
@@ -215,6 +221,7 @@ impl App {
             modal: Modal::None,
             outbox: Vec::new(),
             notice: None,
+            refreshing: None,
             actions: Vec::new(),
             yes_area: Rect::default(),
             modal_area: Rect::default(),
@@ -286,6 +293,14 @@ impl App {
                 // The daemon's log says how an unlock went.
                 Message::Unlock(_) => {}
                 Message::Log(line) => {
+                    // The answer to a refresh goes to the footer as well:
+                    // the log may be narrowed to a device and leave it out.
+                    if self.refreshing.is_some() {
+                        let found = line.message.strip_prefix(crate::protect_bridge::INVENTORY_READ);
+                        if let Some(found) = found {
+                            (self.notice, self.refreshing) = (Some((format!("Refreshed{found}"), Instant::now())), None);
+                        }
+                    }
                     // Keep the view anchored while the user is reading history.
                     if self.log_scroll > 0 && self.log_matches(&line) {
                         self.log_scroll += 1;
@@ -315,9 +330,11 @@ impl App {
             "Cannot look for new devices: the console is not connected.".to_owned()
         } else {
             self.outbox.push(Command::Refresh);
-            "Looking for new devices in UniFi Protect. Any it finds join the list.".to_owned()
+            // The footer says so until the service answers.
+            (self.notice, self.refreshing) = (None, Some(Instant::now()));
+            return;
         };
-        self.notice = Some((said, Instant::now()));
+        (self.notice, self.refreshing) = (Some((said, Instant::now())), None);
     }
 
     fn select(&mut self, row: usize) {
@@ -1008,6 +1025,13 @@ fn hints(app: &App) -> Vec<(&'static str, &'static str, Option<KeyCode>)> {
 fn draw_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width as usize;
     // The answer to a key press takes the line for a few seconds.
+    if app.refreshing.is_some_and(|since| since.elapsed() >= REFRESH_WAIT) {
+        let said = "No answer to the refresh yet. The log, on the overview row, says why.";
+        (app.notice, app.refreshing) = (Some((said.into(), Instant::now())), None);
+    }
+    if app.refreshing.is_some() {
+        app.notice = Some((REFRESHING.into(), Instant::now()));
+    }
     app.notice = app.notice.take().filter(|(_, at)| at.elapsed() < NOTICE_FOR);
     if let Some((said, _)) = &app.notice {
         app.hint_areas.clear();
@@ -2337,8 +2361,25 @@ mod tests {
         assert_eq!(app.outbox, [Command::Refresh]);
         // The key is answered on screen, whatever the log is narrowed to.
         let screen = render_at(&mut app, 120, 50);
-        assert!(screen.lines().last().unwrap().contains("Looking for new devices in UniFi Protect"), "{screen}");
+        assert!(screen.lines().last().unwrap().contains("Reading the devices in UniFi Protect again..."), "{screen}");
         assert!(!screen.contains("Older than this command"), "{screen}");
+        // It stays until the service says what it found, and then shows that,
+        // even with the log narrowed to one device.
+        app.select(1);
+        assert!(app.log_device().is_some());
+        let log = |message: &str| Incoming::Message(Box::new(Message::Log(LogLine { time: 0, level: "INFO".into(), message: message.into() })));
+        app.receive(log("Front Door: motion"));
+        assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains("Reading the devices"));
+        app.receive(log("read the devices in UniFi Protect again: 2 added or changed (the console lists 9, 9 are in HomeKit)"));
+        let screen = render_at(&mut app, 80, 50);
+        let footer = screen.lines().last().unwrap();
+        assert!(footer.contains("Refreshed: 2 added or changed (the console lists 9, 9 are in HomeKit)"), "{screen}");
+        // No answer in time is said too, rather than left hanging.
+        app.handle(key(KeyCode::Char('R')));
+        app.refreshing = Instant::now().checked_sub(REFRESH_WAIT);
+        assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains("No answer to the refresh yet"));
+        app.outbox.clear();
+        app.outbox.push(Command::Refresh);
         app.notice = None;
         assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains(" R refresh "));
         // Detached from the service there is nobody to ask.
