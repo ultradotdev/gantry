@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::crossterm::event::{
@@ -36,6 +36,30 @@ const MAX_AFFIX: usize = crate::overrides::MAX_AFFIX;
 
 /// Log lines kept in the TUI for scrolling back.
 const MAX_LOG_LINES: usize = 2000;
+
+/// The version of this command. The service is a separate copy and can be
+/// an older one: Homebrew replaces the command, `gantry service install`
+/// replaces the service.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The first version whose service reads the devices again when asked.
+const REFRESH_SINCE: [u64; 3] = [0, 1, 6];
+/// How long the footer keeps the answer to a key press.
+const NOTICE_FOR: Duration = Duration::from_secs(8);
+/// How to bring the service up to this command's version.
+const UPDATE_SERVICE: &str = "gantry service install, then gantry unlock";
+
+/// `1.2.3` as numbers, so that versions compare as versions.
+fn version_numbers(version: &str) -> Option<[u64; 3]> {
+    let mut parts = version.split('.').map(|part| part.parse().ok());
+    let numbers = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some(numbers)
+}
+
+/// Whether a service of version `service` is older than `wanted`. One
+/// whose version cannot be read is not called old.
+fn older_than(service: &str, wanted: [u64; 3]) -> bool {
+    version_numbers(service).is_some_and(|numbers| numbers < wanted)
+}
 
 const DIM: Style = Style::new().fg(Color::DarkGray);
 /// The prefix and suffix HomeKit is given, set apart from the name itself.
@@ -141,6 +165,9 @@ struct App {
     modal: Modal,
     /// Requests waiting to be sent to the daemon.
     outbox: Vec<Command>,
+    /// The answer to the last key that shows nothing else on screen, and
+    /// when it was given. The footer shows it for a few seconds.
+    notice: Option<(String, Instant)>,
     /// What can be clicked in the detail pane, by line number.
     actions: Vec<Hit>,
     /// Where the confirmation's Yes was last drawn.
@@ -187,6 +214,7 @@ impl App {
             focus: Focus::Devices,
             modal: Modal::None,
             outbox: Vec::new(),
+            notice: None,
             actions: Vec::new(),
             yes_area: Rect::default(),
             modal_area: Rect::default(),
@@ -269,6 +297,24 @@ impl App {
                 }
             },
         }
+    }
+
+    /// Asks the service to read the console's devices again, and says so:
+    /// the service's own answer is a log line, which the log leaves out
+    /// while it is narrowed to one device. A service from before this was
+    /// possible ignores the request without a word, so that is said here.
+    fn refresh(&mut self) {
+        let Some(state) = self.state.as_ref().filter(|_| self.attached) else {
+            self.notice = Some(("The service is not running, so there is nothing to refresh.".into(), Instant::now()));
+            return;
+        };
+        let said = if older_than(&state.version, REFRESH_SINCE) {
+            format!("The service is v{} and cannot refresh. Update it: {UPDATE_SERVICE}", state.version)
+        } else {
+            self.outbox.push(Command::Refresh);
+            "Looking for new devices in UniFi Protect. Any it finds join the list.".to_owned()
+        };
+        self.notice = Some((said, Instant::now()));
     }
 
     fn select(&mut self, row: usize) {
@@ -530,7 +576,7 @@ impl App {
                     KeyCode::Char('u') => self.start_unlock(),
                     KeyCode::Char('s') => self.toggle_shared(),
                     KeyCode::Char('r') => self.start_rename(),
-                    KeyCode::Char('R') => self.outbox.push(Command::Refresh),
+                    KeyCode::Char('R') => self.refresh(),
                     KeyCode::Char('P') => self.edit_affix(Target::Prefix),
                     KeyCode::Char('S') => self.edit_affix(Target::Suffix),
                     KeyCode::Char(c @ '1'..='4') => self.toggle_detection(Detection::ALL[c as usize - '1' as usize]),
@@ -958,6 +1004,14 @@ fn hints(app: &App) -> Vec<(&'static str, &'static str, Option<KeyCode>)> {
 /// always stays.
 fn draw_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width as usize;
+    // The answer to a key press takes the line for a few seconds.
+    app.notice = app.notice.take().filter(|(_, at)| at.elapsed() < NOTICE_FOR);
+    if let Some((said, _)) = &app.notice {
+        app.hint_areas.clear();
+        let said: String = said.chars().take(width.saturating_sub(1)).collect();
+        frame.render_widget(Paragraph::new(Line::from(vec![Span::raw(" "), Span::styled(said, WARN)])), area);
+        return;
+    }
     let quit = ("q", "quit", Some(KeyCode::Char('q')));
     let size = |(key, label, _): &(&str, &str, Option<KeyCode>)| 2 + key.chars().count() + 1 + label.chars().count();
     let mut shown = hints(app);
@@ -1310,6 +1364,12 @@ fn overview_lines(app: &App, s: &State, width: usize) -> (Vec<Line<'static>>, Ve
             },
         ),
     ]);
+    // A service left behind by an upgrade of the command lacks what the
+    // command now offers, and says nothing when asked for it.
+    if older_than(&s.version, version_numbers(VERSION).unwrap_or_default()) {
+        lines.push(field("", Span::styled(format!("The service is older than this command (v{VERSION})."), WARN)));
+        lines.push(field("", Span::styled(format!("Update it: {UPDATE_SERVICE}"), WARN)));
+    }
     // Why the console is not connected, when the daemon knows.
     if let Some(problem) = s.console.as_ref().and_then(|c| c.problem.clone()) {
         lines.push(field("", Span::styled(problem, DIM)));
@@ -1673,7 +1733,7 @@ mod tests {
             pid: 0,
             detect_everywhere: Vec::new(),
             name: "Gantry 6C2C".into(),
-            version: "0.1.0".into(),
+            version: VERSION.into(),
             listen: "[::]:51826".into(),
             uptime_secs: 3725,
             paired,
@@ -2229,12 +2289,37 @@ mod tests {
     }
 
     #[test]
+    fn a_service_older_than_the_command_is_pointed_out_and_not_asked_to_refresh() {
+        // What an upgrade of the command alone leaves behind.
+        let mut app = app_with(State { version: "0.1.3".into(), ..sample_state(true) });
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.contains(&format!("The service is older than this command (v{VERSION}).")), "{screen}");
+        assert!(screen.contains("Update it: gantry service install, then gantry unlock"), "{screen}");
+        // It would ignore the request without a word, so the dashboard says why.
+        app.handle(key(KeyCode::Char('R')));
+        assert!(app.outbox.is_empty());
+        let screen = render_at(&mut app, 120, 50);
+        let footer = screen.lines().last().unwrap();
+        assert!(footer.contains("The service is v0.1.3 and cannot refresh. Update it: gantry service install"), "{screen}");
+
+        assert!(older_than("0.1.5", REFRESH_SINCE) && !older_than("0.1.6", REFRESH_SINCE) && !older_than("0.2.0", REFRESH_SINCE));
+        assert!(older_than("0.9.9", [0, 10, 0]), "compared as numbers, not as text");
+        assert!(!older_than("", REFRESH_SINCE) && !older_than("next", REFRESH_SINCE) && !older_than("1.2", REFRESH_SINCE));
+    }
+
+    #[test]
     fn capital_r_asks_for_the_devices_to_be_read_again() {
         let mut app = app_with(sample_state(true));
         let screen = render_at(&mut app, 120, 50);
         assert!(screen.lines().last().unwrap().contains(" R refresh "), "{screen}");
         app.handle(key(KeyCode::Char('R')));
         assert_eq!(app.outbox, [Command::Refresh]);
+        // The key is answered on screen, whatever the log is narrowed to.
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.lines().last().unwrap().contains("Looking for new devices in UniFi Protect"), "{screen}");
+        assert!(!screen.contains("older than this command"), "{screen}");
+        app.notice = None;
+        assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains(" R refresh "));
         // Detached from the service there is nobody to ask.
         let mut detached = App::new();
         assert!(!render_at(&mut detached, 120, 50).contains("R refresh"));

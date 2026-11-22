@@ -286,6 +286,9 @@ impl Daemon {
                                 Err(why) => tracing::warn!("{why}"),
                             }
                             send(&mut stream, &Message::State(Box::new(self.state()))).await?;
+                        } else {
+                            // Never the line itself: it may have carried a password.
+                            tracing::warn!("ignored a request this service does not understand; if the gantry command was upgraded, update the service too: gantry service install");
                         }
                     }
                     None => return Ok(()),
