@@ -309,7 +309,10 @@ impl App {
             return;
         };
         let said = if older_than(&state.version, REFRESH_SINCE) {
-            format!("The service is v{} and cannot refresh. Update it: {UPDATE_SERVICE}", state.version)
+            format!("Service v{} cannot refresh. Run {UPDATE_SERVICE}", state.version)
+        } else if !state.console.as_ref().is_some_and(|console| console.connected) {
+            // The service would refuse, and say so only in its log.
+            "Cannot look for new devices: the console is not connected.".to_owned()
         } else {
             self.outbox.push(Command::Refresh);
             "Looking for new devices in UniFi Protect. Any it finds join the list.".to_owned()
@@ -1367,8 +1370,10 @@ fn overview_lines(app: &App, s: &State, width: usize) -> (Vec<Line<'static>>, Ve
     // A service left behind by an upgrade of the command lacks what the
     // command now offers, and says nothing when asked for it.
     if older_than(&s.version, version_numbers(VERSION).unwrap_or_default()) {
-        lines.push(field("", Span::styled(format!("The service is older than this command (v{VERSION})."), WARN)));
-        lines.push(field("", Span::styled(format!("Update it: {UPDATE_SERVICE}"), WARN)));
+        // Short lines: the pane is narrow on an 80-column screen.
+        for line in [&format!("Older than this command, v{VERSION}."), "Update it with:", "  gantry service install", "  gantry unlock"] {
+            lines.push(field("", Span::styled(line.to_owned(), WARN)));
+        }
     }
     // Why the console is not connected, when the daemon knows.
     if let Some(problem) = s.console.as_ref().and_then(|c| c.problem.clone()) {
@@ -2293,14 +2298,30 @@ mod tests {
         // What an upgrade of the command alone leaves behind.
         let mut app = app_with(State { version: "0.1.3".into(), ..sample_state(true) });
         let screen = render_at(&mut app, 120, 50);
-        assert!(screen.contains(&format!("The service is older than this command (v{VERSION}).")), "{screen}");
-        assert!(screen.contains("Update it: gantry service install, then gantry unlock"), "{screen}");
+        assert!(screen.contains(&format!("Older than this command, v{VERSION}.")), "{screen}");
+        assert!(screen.contains("  gantry service install") && screen.contains("  gantry unlock"), "{screen}");
         // It would ignore the request without a word, so the dashboard says why.
         app.handle(key(KeyCode::Char('R')));
         assert!(app.outbox.is_empty());
         let screen = render_at(&mut app, 120, 50);
         let footer = screen.lines().last().unwrap();
-        assert!(footer.contains("The service is v0.1.3 and cannot refresh. Update it: gantry service install"), "{screen}");
+        assert!(footer.contains("Service v0.1.3 cannot refresh. Run gantry service install, then gantry unlock"), "{screen}");
+        // Both say it in full on the narrowest screen the dashboard is fitted to.
+        let narrow = render_at(&mut app, 80, 50);
+        assert!(narrow.lines().last().unwrap().contains("Run gantry service install, then gantry unlock"), "{narrow}");
+        app.notice = None;
+        let narrow = render_at(&mut app, 80, 50);
+        for line in [&format!("Older than this command, v{VERSION}. "), "Update it with:", "  gantry service install ", "  gantry unlock "] {
+            assert!(narrow.contains(line), "{line}\n{narrow}");
+        }
+
+        // A service that would refuse is not said to be looking.
+        let mut state = sample_state(true);
+        state.console.as_mut().unwrap().connected = false;
+        let mut down = app_with(state);
+        down.handle(key(KeyCode::Char('R')));
+        assert!(down.outbox.is_empty());
+        assert!(render_at(&mut down, 80, 50).lines().last().unwrap().contains("the console is not connected"));
 
         assert!(older_than("0.1.5", REFRESH_SINCE) && !older_than("0.1.6", REFRESH_SINCE) && !older_than("0.2.0", REFRESH_SINCE));
         assert!(older_than("0.9.9", [0, 10, 0]), "compared as numbers, not as text");
@@ -2317,7 +2338,7 @@ mod tests {
         // The key is answered on screen, whatever the log is narrowed to.
         let screen = render_at(&mut app, 120, 50);
         assert!(screen.lines().last().unwrap().contains("Looking for new devices in UniFi Protect"), "{screen}");
-        assert!(!screen.contains("older than this command"), "{screen}");
+        assert!(!screen.contains("Older than this command"), "{screen}");
         app.notice = None;
         assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains(" R refresh "));
         // Detached from the service there is nobody to ask.
