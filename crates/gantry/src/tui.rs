@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use ratatui::crossterm::event::{
@@ -36,6 +36,36 @@ const MAX_AFFIX: usize = crate::overrides::MAX_AFFIX;
 
 /// Log lines kept in the TUI for scrolling back.
 const MAX_LOG_LINES: usize = 2000;
+
+/// The version of this command. The service is a separate copy and can be
+/// an older one: Homebrew replaces the command, `gantry service install`
+/// replaces the service.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The first version whose service reads the devices again when asked.
+const REFRESH_SINCE: [u64; 3] = [0, 1, 6];
+/// The first version whose answer to a refresh always carries the counts.
+const REPORTS_SINCE: [u64; 3] = [0, 1, 7];
+/// How long the footer keeps the answer to a key press.
+const NOTICE_FOR: Duration = Duration::from_secs(8);
+/// How long the footer waits for the service to say what a refresh found.
+/// The service acts on the request when the console next speaks to it.
+const REFRESH_WAIT: Duration = Duration::from_secs(30);
+const REFRESHING: &str = "Reading the devices in UniFi Protect again...";
+/// How to bring the service up to this command's version.
+const UPDATE_SERVICE: &str = "gantry service install, then gantry unlock";
+
+/// `1.2.3` as numbers, so that versions compare as versions.
+fn version_numbers(version: &str) -> Option<[u64; 3]> {
+    let mut parts = version.split('.').map(|part| part.parse().ok());
+    let numbers = [parts.next()??, parts.next()??, parts.next()??];
+    parts.next().is_none().then_some(numbers)
+}
+
+/// Whether a service of version `service` is older than `wanted`. One
+/// whose version cannot be read is not called old.
+fn older_than(service: &str, wanted: [u64; 3]) -> bool {
+    version_numbers(service).is_some_and(|numbers| numbers < wanted)
+}
 
 const DIM: Style = Style::new().fg(Color::DarkGray);
 /// The prefix and suffix HomeKit is given, set apart from the name itself.
@@ -141,6 +171,11 @@ struct App {
     modal: Modal,
     /// Requests waiting to be sent to the daemon.
     outbox: Vec<Command>,
+    /// The answer to the last key that shows nothing else on screen, and
+    /// when it was given. The footer shows it for a few seconds.
+    notice: Option<(String, Instant)>,
+    /// When a refresh was asked for that the service has not answered yet.
+    refreshing: Option<Instant>,
     /// What can be clicked in the detail pane, by line number.
     actions: Vec<Hit>,
     /// Where the confirmation's Yes was last drawn.
@@ -187,6 +222,8 @@ impl App {
             focus: Focus::Devices,
             modal: Modal::None,
             outbox: Vec::new(),
+            notice: None,
+            refreshing: None,
             actions: Vec::new(),
             yes_area: Rect::default(),
             modal_area: Rect::default(),
@@ -258,6 +295,18 @@ impl App {
                 // The daemon's log says how an unlock went.
                 Message::Unlock(_) => {}
                 Message::Log(line) => {
+                    // The answer to a refresh goes to the footer as well:
+                    // the log may be narrowed to a device and leave it out.
+                    if self.refreshing.is_some() {
+                        let found = line.message.strip_prefix(crate::protect_bridge::INVENTORY_READ).map(|found| format!("Refreshed{found}"));
+                        // A service before 0.1.7 that finds something says
+                        // only this, so it has to count as the answer.
+                        let plain = self.state.as_ref().is_some_and(|s| older_than(&s.version, REPORTS_SINCE));
+                        let found = found.or_else(|| (plain && line.message.starts_with("added or updated ")).then(|| format!("Refreshed: {}", line.message)));
+                        if let Some(found) = found {
+                            (self.notice, self.refreshing) = (Some((found, Instant::now())), None);
+                        }
+                    }
                     // Keep the view anchored while the user is reading history.
                     if self.log_scroll > 0 && self.log_matches(&line) {
                         self.log_scroll += 1;
@@ -269,6 +318,29 @@ impl App {
                 }
             },
         }
+    }
+
+    /// Asks the service to read the console's devices again, and says so:
+    /// the service's own answer is a log line, which the log leaves out
+    /// while it is narrowed to one device. A service from before this was
+    /// possible ignores the request without a word, so that is said here.
+    fn refresh(&mut self) {
+        let Some(state) = self.state.as_ref().filter(|_| self.attached) else {
+            self.notice = Some(("The service is not running, so there is nothing to refresh.".into(), Instant::now()));
+            return;
+        };
+        let said = if older_than(&state.version, REFRESH_SINCE) {
+            format!("Service v{} cannot refresh. Run {UPDATE_SERVICE}", state.version)
+        } else if !state.console.as_ref().is_some_and(|console| console.connected) {
+            // The service would refuse, and say so only in its log.
+            "Cannot look for new devices: the console is not connected.".to_owned()
+        } else {
+            self.outbox.push(Command::Refresh);
+            // The footer says so until the service answers.
+            (self.notice, self.refreshing) = (None, Some(Instant::now()));
+            return;
+        };
+        (self.notice, self.refreshing) = (Some((said, Instant::now())), None);
     }
 
     fn select(&mut self, row: usize) {
@@ -530,7 +602,7 @@ impl App {
                     KeyCode::Char('u') => self.start_unlock(),
                     KeyCode::Char('s') => self.toggle_shared(),
                     KeyCode::Char('r') => self.start_rename(),
-                    KeyCode::Char('R') => self.outbox.push(Command::Refresh),
+                    KeyCode::Char('R') => self.refresh(),
                     KeyCode::Char('P') => self.edit_affix(Target::Prefix),
                     KeyCode::Char('S') => self.edit_affix(Target::Suffix),
                     KeyCode::Char(c @ '1'..='4') => self.toggle_detection(Detection::ALL[c as usize - '1' as usize]),
@@ -958,6 +1030,21 @@ fn hints(app: &App) -> Vec<(&'static str, &'static str, Option<KeyCode>)> {
 /// always stays.
 fn draw_footer(frame: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width as usize;
+    // The answer to a key press takes the line for a few seconds.
+    if app.refreshing.is_some_and(|since| since.elapsed() >= REFRESH_WAIT) {
+        let said = "No answer to the refresh yet. The log, on the overview row, says why.";
+        (app.notice, app.refreshing) = (Some((said.into(), Instant::now())), None);
+    }
+    if app.refreshing.is_some() {
+        app.notice = Some((REFRESHING.into(), Instant::now()));
+    }
+    app.notice = app.notice.take().filter(|(_, at)| at.elapsed() < NOTICE_FOR);
+    if let Some((said, _)) = &app.notice {
+        app.hint_areas.clear();
+        let said: String = said.chars().take(width.saturating_sub(1)).collect();
+        frame.render_widget(Paragraph::new(Line::from(vec![Span::raw(" "), Span::styled(said, WARN)])), area);
+        return;
+    }
     let quit = ("q", "quit", Some(KeyCode::Char('q')));
     let size = |(key, label, _): &(&str, &str, Option<KeyCode>)| 2 + key.chars().count() + 1 + label.chars().count();
     let mut shown = hints(app);
@@ -1310,6 +1397,14 @@ fn overview_lines(app: &App, s: &State, width: usize) -> (Vec<Line<'static>>, Ve
             },
         ),
     ]);
+    // A service left behind by an upgrade of the command lacks what the
+    // command now offers, and says nothing when asked for it.
+    if older_than(&s.version, version_numbers(VERSION).unwrap_or_default()) {
+        // Short lines: the pane is narrow on an 80-column screen.
+        for line in [&format!("Older than this command, v{VERSION}."), "Update it with:", "  gantry service install", "  gantry unlock"] {
+            lines.push(field("", Span::styled(line.to_owned(), WARN)));
+        }
+    }
     // Why the console is not connected, when the daemon knows.
     if let Some(problem) = s.console.as_ref().and_then(|c| c.problem.clone()) {
         lines.push(field("", Span::styled(problem, DIM)));
@@ -1673,7 +1768,7 @@ mod tests {
             pid: 0,
             detect_everywhere: Vec::new(),
             name: "Gantry 6C2C".into(),
-            version: "0.1.0".into(),
+            version: VERSION.into(),
             listen: "[::]:51826".into(),
             uptime_secs: 3725,
             paired,
@@ -2229,12 +2324,78 @@ mod tests {
     }
 
     #[test]
+    fn a_service_older_than_the_command_is_pointed_out_and_not_asked_to_refresh() {
+        // What an upgrade of the command alone leaves behind.
+        let mut app = app_with(State { version: "0.1.3".into(), ..sample_state(true) });
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.contains(&format!("Older than this command, v{VERSION}.")), "{screen}");
+        assert!(screen.contains("  gantry service install") && screen.contains("  gantry unlock"), "{screen}");
+        // It would ignore the request without a word, so the dashboard says why.
+        app.handle(key(KeyCode::Char('R')));
+        assert!(app.outbox.is_empty());
+        let screen = render_at(&mut app, 120, 50);
+        let footer = screen.lines().last().unwrap();
+        assert!(footer.contains("Service v0.1.3 cannot refresh. Run gantry service install, then gantry unlock"), "{screen}");
+        // Both say it in full on the narrowest screen the dashboard is fitted to.
+        let narrow = render_at(&mut app, 80, 50);
+        assert!(narrow.lines().last().unwrap().contains("Run gantry service install, then gantry unlock"), "{narrow}");
+        app.notice = None;
+        let narrow = render_at(&mut app, 80, 50);
+        for line in [&format!("Older than this command, v{VERSION}. "), "Update it with:", "  gantry service install ", "  gantry unlock "] {
+            assert!(narrow.contains(line), "{line}\n{narrow}");
+        }
+
+        // A service that would refuse is not said to be looking.
+        let mut state = sample_state(true);
+        state.console.as_mut().unwrap().connected = false;
+        let mut down = app_with(state);
+        down.handle(key(KeyCode::Char('R')));
+        assert!(down.outbox.is_empty());
+        assert!(render_at(&mut down, 80, 50).lines().last().unwrap().contains("the console is not connected"));
+
+        assert!(older_than("0.1.5", REFRESH_SINCE) && !older_than("0.1.6", REFRESH_SINCE) && !older_than("0.2.0", REFRESH_SINCE));
+        assert!(older_than("0.9.9", [0, 10, 0]), "compared as numbers, not as text");
+        assert!(!older_than("", REFRESH_SINCE) && !older_than("next", REFRESH_SINCE) && !older_than("1.2", REFRESH_SINCE));
+    }
+
+    #[test]
     fn capital_r_asks_for_the_devices_to_be_read_again() {
         let mut app = app_with(sample_state(true));
         let screen = render_at(&mut app, 120, 50);
         assert!(screen.lines().last().unwrap().contains(" R refresh "), "{screen}");
         app.handle(key(KeyCode::Char('R')));
         assert_eq!(app.outbox, [Command::Refresh]);
+        // The key is answered on screen, whatever the log is narrowed to.
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.lines().last().unwrap().contains("Reading the devices in UniFi Protect again..."), "{screen}");
+        assert!(!screen.contains("Older than this command"), "{screen}");
+        // It stays until the service says what it found, and then shows that,
+        // even with the log narrowed to one device.
+        app.select(1);
+        assert!(app.log_device().is_some());
+        let log = |message: &str| Incoming::Message(Box::new(Message::Log(LogLine { time: 0, level: "INFO".into(), message: message.into() })));
+        app.receive(log("Front Door: motion"));
+        assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains("Reading the devices"));
+        app.receive(log("read the devices in UniFi Protect again: 2 added or changed (the console lists 9, 9 are in HomeKit)"));
+        let screen = render_at(&mut app, 80, 50);
+        let footer = screen.lines().last().unwrap();
+        assert!(footer.contains("Refreshed: 2 added or changed (the console lists 9, 9 are in HomeKit)"), "{screen}");
+        // A 0.1.6 service that finds something says it in other words.
+        app.state.as_mut().unwrap().version = "0.1.6".into();
+        app.handle(key(KeyCode::Char('R')));
+        app.receive(log("added or updated 2 UniFi Protect devices"));
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.lines().last().unwrap().contains("Refreshed: added or updated 2 UniFi Protect devices"), "{screen}");
+        assert!(app.refreshing.is_none());
+        app.state.as_mut().unwrap().version = VERSION.into();
+        // No answer in time is said too, rather than left hanging.
+        app.handle(key(KeyCode::Char('R')));
+        app.refreshing = Instant::now().checked_sub(REFRESH_WAIT);
+        assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains("No answer to the refresh yet"));
+        app.outbox.clear();
+        app.outbox.push(Command::Refresh);
+        app.notice = None;
+        assert!(render_at(&mut app, 120, 50).lines().last().unwrap().contains(" R refresh "));
         // Detached from the service there is nobody to ask.
         let mut detached = App::new();
         assert!(!render_at(&mut detached, 120, 50).contains("R refresh"));
