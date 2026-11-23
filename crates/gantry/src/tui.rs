@@ -43,6 +43,8 @@ const MAX_LOG_LINES: usize = 2000;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The first version whose service reads the devices again when asked.
 const REFRESH_SINCE: [u64; 3] = [0, 1, 6];
+/// The first version whose answer to a refresh always carries the counts.
+const REPORTS_SINCE: [u64; 3] = [0, 1, 7];
 /// How long the footer keeps the answer to a key press.
 const NOTICE_FOR: Duration = Duration::from_secs(8);
 /// How long the footer waits for the service to say what a refresh found.
@@ -296,9 +298,13 @@ impl App {
                     // The answer to a refresh goes to the footer as well:
                     // the log may be narrowed to a device and leave it out.
                     if self.refreshing.is_some() {
-                        let found = line.message.strip_prefix(crate::protect_bridge::INVENTORY_READ);
+                        let found = line.message.strip_prefix(crate::protect_bridge::INVENTORY_READ).map(|found| format!("Refreshed{found}"));
+                        // A service before 0.1.7 that finds something says
+                        // only this, so it has to count as the answer.
+                        let plain = self.state.as_ref().is_some_and(|s| older_than(&s.version, REPORTS_SINCE));
+                        let found = found.or_else(|| (plain && line.message.starts_with("added or updated ")).then(|| format!("Refreshed: {}", line.message)));
                         if let Some(found) = found {
-                            (self.notice, self.refreshing) = (Some((format!("Refreshed{found}"), Instant::now())), None);
+                            (self.notice, self.refreshing) = (Some((found, Instant::now())), None);
                         }
                     }
                     // Keep the view anchored while the user is reading history.
@@ -2374,6 +2380,14 @@ mod tests {
         let screen = render_at(&mut app, 80, 50);
         let footer = screen.lines().last().unwrap();
         assert!(footer.contains("Refreshed: 2 added or changed (the console lists 9, 9 are in HomeKit)"), "{screen}");
+        // A 0.1.6 service that finds something says it in other words.
+        app.state.as_mut().unwrap().version = "0.1.6".into();
+        app.handle(key(KeyCode::Char('R')));
+        app.receive(log("added or updated 2 UniFi Protect devices"));
+        let screen = render_at(&mut app, 120, 50);
+        assert!(screen.lines().last().unwrap().contains("Refreshed: added or updated 2 UniFi Protect devices"), "{screen}");
+        assert!(app.refreshing.is_none());
+        app.state.as_mut().unwrap().version = VERSION.into();
         // No answer in time is said too, rather than left hanging.
         app.handle(key(KeyCode::Char('R')));
         app.refreshing = Instant::now().checked_sub(REFRESH_WAIT);
